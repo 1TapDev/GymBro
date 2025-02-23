@@ -32,15 +32,15 @@ class Database:
             except Exception as e:
                 print(f"❌ Error adding user {username}: {e}")
 
-    async def log_checkin(self, user_id, category):
-        """Log a gym or food check-in and update the progress table."""
+    async def log_checkin(self, user_id, category, image_hash):
+        """Log a gym or food check-in and store image hash."""
         async with self.pool.acquire() as conn:
             try:
-                print(f"📝 Logging check-in for user {user_id} in category {category}...")
+                print(f"📝 Logging check-in for user {user_id} in category {category} with image hash {image_hash}...")
                 await conn.execute("""
-                    INSERT INTO checkins (user_id, category)
-                    VALUES ($1, $2)
-                """, user_id, category)
+                    INSERT INTO checkins (user_id, category, image_hash)
+                    VALUES ($1, $2, $3)
+                """, user_id, category, image_hash)
                 print("✅ Check-in recorded successfully!")
 
                 # Update progress tracking

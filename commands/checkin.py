@@ -26,12 +26,14 @@ class CheckIn(commands.Cog):
         user_id = interaction.user.id
         username = interaction.user.name
         print(f"📥 Received /checkin command from {username} (ID: {user_id}) - Category: {category}")
+        # Acknowledge the command immediately to prevent timeout
+        await interaction.response.defer()
         # Add user to database before logging check-in
         await db.add_user(user_id, username)
         # Log the check-in
         await db.log_checkin(user_id, category)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ **{category.capitalize()} check-in started!** Please upload a photo."
         )
 
@@ -49,17 +51,23 @@ class CheckIn(commands.Cog):
             image_bytes = await attachment.read()
             image_hash = self.hash_image(image_bytes)
 
-            # Check if the user has uploaded this image before
-            if interaction.user.id in self.previous_images and image_hash in self.previous_images[interaction.user.id]:
-                await interaction.followup.send(
-                    "⚠️ You have already used this image for a check-in. Please upload a new one.")
+            # Ensure user doesn't reuse the same image
+            async with db.pool.acquire() as conn:
+                existing_checkin = await conn.fetchrow("""
+                    SELECT * FROM checkins WHERE user_id = $1 AND image_hash = $2
+                """, user_id, image_hash)
+
+            if existing_checkin:
+                await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
                 return
 
-            # Store the new image hash for this user
-            if interaction.user.id not in self.previous_images:
-                self.previous_images[interaction.user.id] = set()
-            self.previous_images[interaction.user.id].add(image_hash)
+            # Store the image hash for tracking
+            if user_id not in self.previous_images:
+                self.previous_images[user_id] = set()
+            self.previous_images[user_id].add(image_hash)
 
+            # Log the check-in with image hash
+            await db.log_checkin(user_id, category, image_hash)
             await interaction.followup.send(f"✅ {category.capitalize()} check-in **completed!** You earned 1 point.")
 
         except asyncio.TimeoutError:
