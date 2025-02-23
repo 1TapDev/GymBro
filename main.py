@@ -21,6 +21,6 @@ client = Client(command_prefix="!", intents=intents)
 
 @client.tree.command(name="checkin", description="Submit a gym check-in to earn points.")
 async def checkin(interaction: discord.Interaction):
-    await interaction.response.send_message()
+    await interaction.response.send_message("Test")
 
 client.run(os.environ.get("token")) # Run the bot with a token
