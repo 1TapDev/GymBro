@@ -1,140 +1,114 @@
-GymBro 🤖💪
+# GymBro 🤖💪
 
-A Discord bot that tracks gym check-ins, personal records, and user progress with a PostgreSQL database.
+A **Discord bot** that tracks gym check-ins, personal records, and user progress with a PostgreSQL database.
 
-🚀 Features
+---
 
-✅ Gym Check-Ins – Users can log their gym visits, weight progress, and food intake.✅ Personal Records (PRs) – Track best lifts for deadlift, bench, and squat.✅ Progress Tracking – View total check-ins, weight changes, and logs.✅ Leaderboard – Shows top users based on points earned.
+## 🚀 Features
+✅ **Gym Check-Ins** – Users can log their gym visits, weight progress, and food intake.  
+✅ **Personal Records (PRs)** – Track best lifts for **deadlift, bench, and squat**.  
+✅ **Progress Tracking** – View total check-ins, weight changes, and logs.  
+✅ **Leaderboard** – Shows top users based on points earned.  
 
-🛠️ Setup & Installation
+---
 
-1️⃣ Clone the Repository
+## 🛠️ Setup & Installation
 
+### **1️⃣ Clone the Repository**
+```sh
 git clone https://github.com/1TapDev/GymBro.git
 cd GymBro
+```
 
-2️⃣ Install Dependencies
-
-Make sure you have Python 3.10+ installed.
-
+### **2️⃣ Install Dependencies**
+Make sure you have **Python 3.10+** installed.
+```sh
 pip install -r requirements.txt
+```
 
-3️⃣ Set Up Environment Variables
-
-Create a .env file in the root directory:
-
+### **3️⃣ Set Up Environment Variables**
+Create a `.env` file in the root directory:
+```sh
 cp .env.example .env
-
-Then update .env with your bot token and database details:
-
+```
+Then update `.env` with your bot token and database details:
+```
 DATABASE_URL=postgresql://botuser:yourpassword@localhost:5432/gymbro
 TOKEN=your_discord_bot_token
+```
 
-4️⃣ Set Up PostgreSQL Database
+### **4️⃣ Set Up PostgreSQL Database**
+Ensure PostgreSQL is installed and running.  
+Run the following commands to create the database:
 
-Ensure PostgreSQL is installed and running.Run the following commands to create the database:
-
+```sh
 psql -U postgres
-
+```
+```sql
 CREATE DATABASE gymbro;
 CREATE USER botuser WITH ENCRYPTED PASSWORD 'yourpassword';
 GRANT ALL PRIVILEGES ON DATABASE gymbro TO botuser;
-
+```
 Now, apply the database schema:
-
+```sh
 psql -U botuser -d gymbro -f database/schema.sql
+```
+💪 **Database is now ready!**
 
-💪 Database is now ready!
-
-5️⃣ Start the Bot
-
+### **5️⃣ Start the Bot**
+```sh
 python main.py
+```
+---
 
-🤖 Bot Commands
+## 🤖 Bot Commands
 
-🏋️‍♂️ Check-Ins
+### **🏋️‍♂️ Check-Ins**
+| Command          | Description |
+|-----------------|-------------|
+| `/checkin gym`  | Log a gym check-in (requires a workout photo). |
+| `/checkin weight` | Log weight progress (requires scale photo). |
+| `/checkin food`  | Log food intake (requires meal photo). |
 
-Command
+### **📊 Progress & PRs**
+| Command      | Description |
+|-------------|-------------|
+| `/progress` | View total check-ins, weight logs, and improvements. |
+| `/pr set deadlift <number>` | Set new deadlift PR. |
+| `/pr set bench <number>` | Set new bench press PR. |
+| `/pr set squat <number>` | Set new squat PR. |
+| `/pr` | View all personal records. |
 
-Description
+### **🏆 Leaderboard & Points**
+| Command      | Description |
+|-------------|-------------|
+| `/leaderboard` | Shows the top users based on points earned. |
+| `/points` | View your current points. |
 
-/checkin gym
+---
 
-Log a gym check-in (requires a workout photo).
+## 🛠 Database Schema
+The bot uses a **PostgreSQL** database to store user progress.
 
-/checkin weight
+📌 **Schema:** [`database/schema.sql`](database/schema.sql)
 
-Log weight progress (requires scale photo).
+---
 
-/checkin food
+## 💡 Contributing
+Contributions are welcome!  
+1. **Fork the repository**  
+2. **Create a new branch:** `git checkout -b feature-name`  
+3. **Commit changes:** `git commit -m "✨ Added new feature"`  
+4. **Push to GitHub:** `git push origin feature-name`  
+5. **Create a Pull Request**
 
-Log food intake (requires meal photo).
+---
 
-📊 Progress & PRs
+## 🐜 License
+This project is **open-source** under the **MIT License**.
 
-Command
+---
 
-Description
-
-/progress
-
-View total check-ins, weight logs, and improvements.
-
-/pr set deadlift <number>
-
-Set new deadlift PR.
-
-/pr set bench <number>
-
-Set new bench press PR.
-
-/pr set squat <number>
-
-Set new squat PR.
-
-/pr
-
-View all personal records.
-
-🏆 Leaderboard & Points
-
-Command
-
-Description
-
-/leaderboard
-
-Shows the top users based on points earned.
-
-/points
-
-View your current points.
-
-🛠 Database Schema
-
-The bot uses a PostgreSQL database to store user progress.
-
-📌 Schema: database/schema.sql
-
-💡 Contributing
-
-Contributions are welcome!
-
-Fork the repository
-
-Create a new branch: git checkout -b feature-name
-
-Commit changes: git commit -m "✨ Added new feature"
-
-Push to GitHub: git push origin feature-name
-
-Create a Pull Request
-
-🐜 License
-
-This project is open-source under the MIT License.
-
-✉️ Contact
-
-If you have any questions, reach out via GitHub Issues or contact 1TapDev.
+## ✉️ Contact
+If you have any questions, reach out via **GitHub Issues** or contact **1TapDev**.
 
