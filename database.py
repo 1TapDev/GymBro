@@ -32,30 +32,57 @@ class Database:
             except Exception as e:
                 print(f"❌ Error adding user {username}: {e}")
 
-    async def log_checkin(self, user_id, category, image_hash):
-        """Log a gym or food check-in and store image hash."""
+    async def log_checkin(self, user_id, category, image_hash=None):
+        """Log a gym or food check-in and store image hash, while updating user points."""
         async with self.pool.acquire() as conn:
             try:
                 print(f"📝 Logging check-in for user {user_id} in category {category} with image hash {image_hash}...")
+
+                # Insert check-in record
                 await conn.execute("""
-                    INSERT INTO checkins (user_id, category, image_hash)
-                    VALUES ($1, $2, $3)
+                    INSERT INTO checkins (user_id, category, image_hash, timestamp)
+                    VALUES ($1, $2, $3, NOW())
                 """, user_id, category, image_hash)
                 print("✅ Check-in recorded successfully!")
 
-                # Update progress tracking
+                # Ensure user exists in progress table (Fix ON CONFLICT issue)
+                await conn.execute("""
+                    INSERT INTO progress (user_id, total_gym_checkins, total_food_logs)
+                    VALUES ($1, 0, 0)
+                    ON CONFLICT (user_id) DO NOTHING
+                """, user_id)
+
+                # Update progress tracking & points
                 if category == "gym":
-                    print("🔄 Updating progress for gym check-ins...")
+                    print("🔄 Updating progress & points for gym check-ins...")
                     await conn.execute("""
                         UPDATE progress SET total_gym_checkins = total_gym_checkins + 1 WHERE user_id = $1
                     """, user_id)
-                    print("✅ Progress updated successfully for gym!")
+                    await conn.execute("""
+                        UPDATE users SET points = points + 1 WHERE user_id = $1
+                    """, user_id)
+                    print("✅ Points updated for gym check-in!")
+
                 elif category == "food":
-                    print("🔄 Updating progress for food logs...")
+                    print("🔄 Updating progress & points for food logs...")
                     await conn.execute("""
                         UPDATE progress SET total_food_logs = total_food_logs + 1 WHERE user_id = $1
                     """, user_id)
-                    print("✅ Progress updated successfully for food logs!")
+                    await conn.execute("""
+                        UPDATE users SET points = points + 1 WHERE user_id = $1
+                    """, user_id)
+                    print("✅ Points updated for food check-in!")
+
+                elif category == "weight":
+                    print("🔄 Updating progress for weight logs...")
+                    await conn.execute("""
+                        UPDATE progress SET total_weight_change = total_weight_change + 1 WHERE user_id = $1
+                    """, user_id)
+                    await conn.execute("""
+                        UPDATE users SET points = points + 1 WHERE user_id = $1
+                    """, user_id)
+                    print("✅ Points updated for weight check-in!")
+
             except Exception as e:
                 print(f"❌ Error logging check-in for user {user_id}: {e}")
 
