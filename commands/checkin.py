@@ -23,20 +23,39 @@ class CheckIn(commands.Cog):
     async def checkin(self, interaction: discord.Interaction, category: app_commands.Choice[str]):
         category = category.value  # Get the selected category value
 
-        if category == "gym":
-            await interaction.response.send_message(
-                "✅ Gym check-in recorded! Please upload a **photo of your workout** to earn 1 point. 🏋️‍♂️"
-            )
-        elif category == "weight":
-            await interaction.response.send_message(
-                "⚖️ Weight check-in recorded! Please upload a **photo of your scale** with your current weight to earn 1 point."
-            )
-        elif category == "food":
-            await interaction.response.send_message(
-                "🍽️ Food check-in recorded! Please upload a **photo of your meal** to earn 1 point."
-            )
-        else:
-            await interaction.response.send_message("❌ Invalid category. Please use `gym`, `weight`, or `food`.")
+        await interaction.response.send_message(
+            f"✅ **{category.capitalize()} check-in started!** Please upload a photo."
+        )
+
+        def check(m):
+            return m.author.id == interaction.user.id and m.attachments  # Check if user sends an image
+
+        try:
+            message = await self.bot.wait_for("message", timeout=60.0, check=check)  # Wait for user to upload an image
+            attachment = message.attachments[0]
+
+            if not attachment.content_type.startswith("image/"):  # Ensure the file is an image
+                await interaction.followup.send("❌ That’s not an image! Please upload a valid photo.")
+                return
+
+            image_bytes = await attachment.read()
+            image_hash = self.hash_image(image_bytes)
+
+            # Check if the user has uploaded this image before
+            if interaction.user.id in self.previous_images and image_hash in self.previous_images[interaction.user.id]:
+                await interaction.followup.send(
+                    "⚠️ You have already used this image for a check-in. Please upload a new one.")
+                return
+
+            # Store the new image hash for this user
+            if interaction.user.id not in self.previous_images:
+                self.previous_images[interaction.user.id] = set()
+            self.previous_images[interaction.user.id].add(image_hash)
+
+            await interaction.followup.send(f"✅ {category.capitalize()} check-in **completed!** You earned 1 point.")
+
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏳ You took too long to upload an image. Please try again.")
 
 async def setup(bot):
-    await bot.add_cog(CheckIn(bot))  # Asynchronous function to add the cog to the bot.
+    await bot.add_cog(CheckIn(bot))
