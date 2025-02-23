@@ -1,5 +1,6 @@
 import asyncpg
 import os
+from datetime import datetime, timedelta
 
 class Database:
     def __init__(self):
@@ -12,6 +13,27 @@ class Database:
             print("✅ Database connected successfully!")  # Log success
         except Exception as e:
             print(f"❌ Database connection failed: {e}")  # Log failure
+
+    async def check_cooldown(self, user_id, category):
+        """Check if a user is on cooldown for a specific check-in category."""
+        async with self.pool.acquire() as conn:
+            try:
+                last_checkin = await conn.fetchval("""
+                    SELECT MAX(timestamp) FROM checkins WHERE user_id = $1 AND category = $2
+                """, user_id, category)
+
+                if last_checkin:
+                    last_checkin_date = last_checkin.date()
+                    current_date = datetime.utcnow().date()
+
+                    if category in ["gym", "food"] and last_checkin_date == current_date:
+                        return True  # Daily reset (not 24 hours)
+                    if category == "weight" and last_checkin_date >= current_date - timedelta(days=7):
+                        return True  # Weekly reset
+                return False
+            except Exception as e:
+                print(f"❌ Error checking cooldown for user {user_id}: {e}")
+                return False
 
     async def close(self):
         """Close the database connection."""
@@ -36,6 +58,10 @@ class Database:
         """Log a gym or food check-in and store image hash, while updating user points."""
         async with self.pool.acquire() as conn:
             try:
+                if await self.check_cooldown(user_id, category):
+                    print(f"⏳ User {user_id} is still on cooldown for {category}. Check-in denied.")
+                    return "cooldown"
+
                 print(f"📝 Logging check-in for user {user_id} in category {category} with image hash {image_hash}...")
 
                 # Insert check-in record
