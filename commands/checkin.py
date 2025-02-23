@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 import asyncio
 import hashlib  # Used for detecting reused images
+from database import db
 
 class CheckIn(commands.Cog):
     def __init__(self, bot):
@@ -22,6 +23,13 @@ class CheckIn(commands.Cog):
     )
     async def checkin(self, interaction: discord.Interaction, category: app_commands.Choice[str]):
         category = category.value  # Get the selected category value
+        user_id = interaction.user.id
+        username = interaction.user.name
+        print(f"📥 Received /checkin command from {username} (ID: {user_id}) - Category: {category}")
+        # Add user to database before logging check-in
+        await db.add_user(user_id, username)
+        # Log the check-in
+        await db.log_checkin(user_id, category)
 
         await interaction.response.send_message(
             f"✅ **{category.capitalize()} check-in started!** Please upload a photo."
