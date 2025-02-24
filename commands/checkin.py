@@ -35,6 +35,7 @@ class CheckIn(commands.Cog):
             return
 
         workout = None  # Default to None unless user inputs it
+        weight = None  # Default to None for weight logging
 
         # If category is gym, ask for the workout type
         if category == "gym":
@@ -48,6 +49,23 @@ class CheckIn(commands.Cog):
                 workout = workout_msg.content  # Store the workout input
             except asyncio.TimeoutError:
                 await interaction.followup.send("⏳ You took too long to enter a workout. Please try again.")
+                return
+
+        # If category is weight, ask for weight input
+        if category == "weight":
+            await interaction.followup.send("⚖️ **Please enter your weight in pounds (e.g., 175.5):**")
+
+            def weight_check(m):
+                return m.author.id == user_id and m.content.replace(".", "", 1).isdigit()
+
+            try:
+                weight_msg = await self.bot.wait_for("message", timeout=30.0, check=weight_check)
+                weight = float(weight_msg.content)  # Convert weight to float
+            except asyncio.TimeoutError:
+                await interaction.followup.send("⏳ You took too long to enter your weight. Please try again.")
+                return
+            except ValueError:
+                await interaction.followup.send("❌ Invalid weight input. Please enter a numeric value (e.g., 175.5).")
                 return
 
         await interaction.followup.send(f"✅ **{category.capitalize()} check-in started!** Please upload a photo.")
@@ -75,8 +93,8 @@ class CheckIn(commands.Cog):
                 await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
                 return
 
-            # Log check-in with the workout type
-            result = await db.log_checkin(user_id, category, image_hash, workout)
+            # Log check-in with the weight or workout type
+            result = await db.log_checkin(user_id, category, image_hash, workout, weight)
 
             if result == "success":
                 await interaction.followup.send(f"✅ {category.capitalize()} check-in **completed!** You earned 1 point.")

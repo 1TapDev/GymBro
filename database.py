@@ -80,7 +80,7 @@ class Database:
             except Exception as e:
                 print(f"❌ Error adding user {username}: {e}")
 
-    async def log_checkin(self, user_id, category, image_hash, workout=None):
+    async def log_checkin(self, user_id, category, image_hash, workout=None, weight=None):
         """Log a check-in only after the image is confirmed, and update points dynamically."""
         async with self.pool.acquire() as conn:
             try:
@@ -94,11 +94,11 @@ class Database:
                     print("❌ No valid image uploaded. Check-in will NOT be recorded.")
                     return "no_image"
 
-                # Insert check-in record **only after image is provided**
+                # Insert check-in record, storing weight if applicable
                 await conn.execute("""
-                    INSERT INTO checkins (user_id, category, image_hash, workout, timestamp)
-                    VALUES ($1, $2, $3, $4, NOW())
-                """, user_id, category, image_hash, workout)
+                    INSERT INTO checkins (user_id, category, image_hash, workout, weight, timestamp)
+                    VALUES ($1, $2, $3, $4, $5, NOW())
+                """, user_id, category, image_hash, workout, weight)
 
                 print("✅ Check-in recorded successfully!")
 
@@ -113,8 +113,9 @@ class Database:
                     """, user_id)
                 elif category == "weight":
                     await conn.execute("""
-                        UPDATE progress SET total_weight_change = total_weight_change + 1 WHERE user_id = $1
-                    """, user_id)
+                        UPDATE progress SET total_weight_change = total_weight_change + 1, last_logged_weight = $1 
+                        WHERE user_id = $2
+                    """, weight, user_id)
 
                 # Fetch updated points dynamically
                 updated_points = await self.get_user_points(user_id)
@@ -131,6 +132,7 @@ class Database:
             except Exception as e:
                 print(f"❌ Error logging check-in for user {user_id}: {e}")
                 return "error"
+
 
     async def get_user_points(self, user_id):
         """Calculate total points based on check-ins (excluding duplicates)."""
