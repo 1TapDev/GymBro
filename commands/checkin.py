@@ -36,6 +36,7 @@ class CheckIn(commands.Cog):
 
         workout = None  # Default to None unless user inputs it
         weight = None  # Default to None for weight logging
+        meal = None  # Default to None for food logging
 
         # If category is gym, ask for the workout type
         if category == "gym":
@@ -68,6 +69,20 @@ class CheckIn(commands.Cog):
                 await interaction.followup.send("❌ Invalid weight input. Please enter a numeric value (e.g., 175.5).")
                 return
 
+        # If category is food, ask for meal description
+        if category == "food":
+            await interaction.followup.send("🍽️ **What meal did you have?** Please describe it.")
+
+            def meal_check(m):
+                return m.author.id == user_id and isinstance(m.content, str)
+
+            try:
+                meal_msg = await self.bot.wait_for("message", timeout=30.0, check=meal_check)
+                meal = meal_msg.content  # Store the meal input
+            except asyncio.TimeoutError:
+                await interaction.followup.send("⏳ You took too long to enter your meal. Please try again.")
+                return
+
         await interaction.followup.send(f"✅ **{category.capitalize()} check-in started!** Please upload a photo.")
 
         def check(m):
@@ -93,8 +108,8 @@ class CheckIn(commands.Cog):
                 await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
                 return
 
-            # Log check-in with the weight or workout type
-            result = await db.log_checkin(user_id, category, image_hash, workout, weight)
+            # Log check-in with the meal, weight, or workout type
+            result = await db.log_checkin(user_id, category, image_hash, workout, weight, meal)
 
             if result == "success":
                 await interaction.followup.send(f"✅ {category.capitalize()} check-in **completed!** You earned 1 point.")

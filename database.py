@@ -80,7 +80,7 @@ class Database:
             except Exception as e:
                 print(f"❌ Error adding user {username}: {e}")
 
-    async def log_checkin(self, user_id, category, image_hash, workout=None, weight=None):
+    async def log_checkin(self, user_id, category, image_hash, workout=None, weight=None, meal=None):
         """Log a check-in only after the image is confirmed, and update points dynamically."""
         async with self.pool.acquire() as conn:
             try:
@@ -94,11 +94,11 @@ class Database:
                     print("❌ No valid image uploaded. Check-in will NOT be recorded.")
                     return "no_image"
 
-                # Insert check-in record, storing weight if applicable
+                # Insert check-in record, storing meal if applicable
                 await conn.execute("""
-                    INSERT INTO checkins (user_id, category, image_hash, workout, weight, timestamp)
-                    VALUES ($1, $2, $3, $4, $5, NOW())
-                """, user_id, category, image_hash, workout, weight)
+                    INSERT INTO checkins (user_id, category, image_hash, workout, weight, meal, timestamp)
+                    VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                """, user_id, category, image_hash, workout, weight, meal)
 
                 print("✅ Check-in recorded successfully!")
 
@@ -132,7 +132,6 @@ class Database:
             except Exception as e:
                 print(f"❌ Error logging check-in for user {user_id}: {e}")
                 return "error"
-
 
     async def get_user_points(self, user_id):
         """Calculate total points based on check-ins (excluding duplicates)."""
