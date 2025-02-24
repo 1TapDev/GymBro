@@ -30,27 +30,29 @@ class Database:
                 # Get current time in UTC and convert to EST
                 current_time_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
                 current_time_est = current_time_utc.astimezone(EST)
+                today_est = current_time_est.date()  # Get today's date in EST
 
                 if last_checkin:
                     # Convert last check-in timestamp to EST
                     last_checkin_time_utc = last_checkin["timestamp"].replace(tzinfo=pytz.utc)
                     last_checkin_time_est = last_checkin_time_utc.astimezone(EST)
+                    last_checkin_date = last_checkin_time_est.date()  # Get last check-in date
 
                     if category in ["gym", "food"]:
-                        # Get midnight EST for the next day
-                        next_available_time = datetime.combine(last_checkin_time_est.date() + timedelta(days=1),
-                                                               datetime.min.time(), EST)
-
-                        if current_time_est < next_available_time:
-                            remaining_time = next_available_time - current_time_est
+                        # User must wait until midnight EST
+                        next_reset = datetime.combine(today_est + timedelta(days=1), datetime.min.time(), EST)
+                        if last_checkin_date == today_est:
+                            remaining_time = next_reset - current_time_est
                             hours, minutes = divmod(int(remaining_time.total_seconds()) // 60, 60)
+                            return f"⏳ You have already checked in for **{category}** today. Try again in **{hours}h {minutes}m** (after midnight EST)!"
 
                     elif category == "weight":
-                        # Get the next available weight check-in time (7 days later)
-                        next_available_time = last_checkin_time_est + timedelta(days=7)
+                        # User must wait until next **Sunday**
+                        last_sunday = last_checkin_date - timedelta(days=last_checkin_date.weekday() + 1)  # Find last Sunday
+                        next_sunday = last_sunday + timedelta(days=7)  # Find next Sunday
 
-                        if current_time_est < next_available_time:
-                            remaining_time = next_available_time - current_time_est
+                        if current_time_est < datetime.combine(next_sunday, datetime.min.time(), EST):
+                            remaining_time = datetime.combine(next_sunday, datetime.min.time(), EST) - current_time_est
                             days, remainder = divmod(int(remaining_time.total_seconds()), 86400)
                             hours, minutes = divmod(remainder // 60, 60)
                             return f"⏳ You have already checked in for **{category}** this week. Try again in **{days}d {hours}h {minutes}m**."
@@ -60,6 +62,7 @@ class Database:
             except Exception as e:
                 print(f"❌ Error checking cooldown for user {user_id}: {e}")
                 return None
+
 
     async def close(self):
         """Close the database connection."""
