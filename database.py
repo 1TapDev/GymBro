@@ -150,15 +150,12 @@ class Database:
         """Retrieve user progress (total check-ins, food logs, weight change)."""
         async with self.pool.acquire() as conn:
             try:
-                print(f"📊 Fetching progress for user {user_id}...")
-                result = await conn.fetchrow("""
+                return await conn.fetchrow("""
                     SELECT total_gym_checkins, total_food_logs, total_weight_change
                     FROM progress WHERE user_id = $1
                 """, user_id)
-                print(f"✅ Progress retrieved: {result}")
-                return result
             except Exception as e:
-                print(f"❌ Error fetching progress: {e}")
+                return None  # Return None if there's an error instead of printing
 
     async def update_pr(self, user_id, lift, value):
         """Update the user's personal record (PR) for deadlift, bench, or squat."""
