@@ -31,30 +31,23 @@ class Database:
                 current_time_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
                 current_time_est = current_time_utc.astimezone(EST)
 
-                print(f"🕒 Current Time (EST): {current_time_est}")
-
                 if last_checkin:
                     # Convert last check-in timestamp to EST
                     last_checkin_time_utc = last_checkin["timestamp"].replace(tzinfo=pytz.utc)
                     last_checkin_time_est = last_checkin_time_utc.astimezone(EST)
 
-                    print(f"📅 Last Check-in Time for {category} (EST): {last_checkin_time_est}")
-
                     if category in ["gym", "food"]:
                         # Get midnight EST for the next day
                         next_available_time = datetime.combine(last_checkin_time_est.date() + timedelta(days=1),
                                                                datetime.min.time(), EST)
-                        print(f"⏳ Next Available Check-in Time (EST): {next_available_time}")
 
                         if current_time_est < next_available_time:
                             remaining_time = next_available_time - current_time_est
                             hours, minutes = divmod(int(remaining_time.total_seconds()) // 60, 60)
-                            return f"⏳ You have already checked in for **{category}** today. Try again in **{hours}h {minutes}m**."
 
                     elif category == "weight":
                         # Get the next available weight check-in time (7 days later)
                         next_available_time = last_checkin_time_est + timedelta(days=7)
-                        print(f"📆 Next Weight Check-in Allowed (EST): {next_available_time}")
 
                         if current_time_est < next_available_time:
                             remaining_time = next_available_time - current_time_est
@@ -62,7 +55,6 @@ class Database:
                             hours, minutes = divmod(remainder // 60, 60)
                             return f"⏳ You have already checked in for **{category}** this week. Try again in **{days}d {hours}h {minutes}m**."
 
-                print("✅ No cooldown detected, user can check in.")
                 return None  # No cooldown, user can check in
 
             except Exception as e:
