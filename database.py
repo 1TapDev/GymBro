@@ -15,22 +15,28 @@ class Database:
             print(f"❌ Database connection failed: {e}")  # Log failure
 
     async def check_cooldown(self, user_id, category):
-        """Check if a user is on cooldown for a specific check-in category."""
+        """Check if a user is on cooldown by reading the timestamp from the checkins table."""
         async with self.pool.acquire() as conn:
             try:
-                last_checkin = await conn.fetchval("""
-                    SELECT MAX(timestamp) FROM checkins WHERE user_id = $1 AND category = $2
+                last_checkin = await conn.fetchrow("""
+                    SELECT timestamp FROM checkins 
+                    WHERE user_id = $1 AND category = $2 
+                    ORDER BY timestamp DESC LIMIT 1
                 """, user_id, category)
 
                 if last_checkin:
-                    last_checkin_date = last_checkin.date()
+                    last_checkin_date = last_checkin["timestamp"].date()
                     current_date = datetime.utcnow().date()
 
+                    # Gym & Food: Can check in once per **calendar day**
                     if category in ["gym", "food"] and last_checkin_date == current_date:
-                        return True  # Daily reset (not 24 hours)
+                        return True  # Still on cooldown for today
+
+                    # Weight: Can check in once per **week**
                     if category == "weight" and last_checkin_date >= current_date - timedelta(days=7):
-                        return True  # Weekly reset
-                return False
+                        return True  # Still on cooldown for the week
+
+                return False  # No cooldown, can check in
             except Exception as e:
                 print(f"❌ Error checking cooldown for user {user_id}: {e}")
                 return False
@@ -54,8 +60,8 @@ class Database:
             except Exception as e:
                 print(f"❌ Error adding user {username}: {e}")
 
-    async def log_checkin(self, user_id, category, image_hash=None):
-        """Log a gym or food check-in and store image hash, while updating user points."""
+    async def log_checkin(self, user_id, category, image_hash):
+        """Log a check-in only after the image is confirmed, and update points dynamically."""
         async with self.pool.acquire() as conn:
             try:
                 if await self.check_cooldown(user_id, category):
@@ -64,53 +70,61 @@ class Database:
 
                 print(f"📝 Logging check-in for user {user_id} in category {category} with image hash {image_hash}...")
 
-                # Insert check-in record
+                # Ensure an image is provided
+                if not image_hash:
+                    print("❌ No valid image uploaded. Check-in will NOT be recorded.")
+                    return "no_image"
+
+                # Insert check-in record **only after image is provided**
                 await conn.execute("""
                     INSERT INTO checkins (user_id, category, image_hash, timestamp)
                     VALUES ($1, $2, $3, NOW())
                 """, user_id, category, image_hash)
                 print("✅ Check-in recorded successfully!")
 
-                # Ensure user exists in progress table (Fix ON CONFLICT issue)
-                await conn.execute("""
-                    INSERT INTO progress (user_id, total_gym_checkins, total_food_logs)
-                    VALUES ($1, 0, 0)
-                    ON CONFLICT (user_id) DO NOTHING
-                """, user_id)
-
-                # Update progress tracking & points
+                # Update progress tracking
                 if category == "gym":
-                    print("🔄 Updating progress & points for gym check-ins...")
                     await conn.execute("""
                         UPDATE progress SET total_gym_checkins = total_gym_checkins + 1 WHERE user_id = $1
                     """, user_id)
-                    await conn.execute("""
-                        UPDATE users SET points = points + 1 WHERE user_id = $1
-                    """, user_id)
-                    print("✅ Points updated for gym check-in!")
-
                 elif category == "food":
-                    print("🔄 Updating progress & points for food logs...")
                     await conn.execute("""
                         UPDATE progress SET total_food_logs = total_food_logs + 1 WHERE user_id = $1
                     """, user_id)
-                    await conn.execute("""
-                        UPDATE users SET points = points + 1 WHERE user_id = $1
-                    """, user_id)
-                    print("✅ Points updated for food check-in!")
-
                 elif category == "weight":
-                    print("🔄 Updating progress for weight logs...")
                     await conn.execute("""
                         UPDATE progress SET total_weight_change = total_weight_change + 1 WHERE user_id = $1
                     """, user_id)
-                    await conn.execute("""
-                        UPDATE users SET points = points + 1 WHERE user_id = $1
-                    """, user_id)
-                    print("✅ Points updated for weight check-in!")
+
+                # Fetch updated points dynamically
+                updated_points = await self.get_user_points(user_id)
+
+                # Ensure points are updated in `users` table
+                await conn.execute("""
+                    UPDATE users SET points = $1 WHERE user_id = $2
+                """, updated_points, user_id)
+
+                print(f"🏆 Updated points for user {user_id}: {updated_points}")
+
+                return "success"
 
             except Exception as e:
                 print(f"❌ Error logging check-in for user {user_id}: {e}")
+                return "error"
+
+    async def get_user_points(self, user_id):
+        """Calculate total points based on check-ins (excluding duplicates)."""
+        async with self.pool.acquire() as conn:
+            try:
+                total_points = await conn.fetchval("""
+                    SELECT COUNT(*) FROM checkins 
+                    WHERE user_id = $1
+                """, user_id)
+
+                return total_points if total_points else 0
+            except Exception as e:
+                print(f"❌ Error fetching points for user {user_id}: {e}")
+                return 0
 
     async def get_progress(self, user_id):
         """Retrieve user progress (total check-ins, food logs, weight change)."""

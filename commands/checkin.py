@@ -22,75 +22,56 @@ class CheckIn(commands.Cog):
         ]
     )
     async def checkin(self, interaction: discord.Interaction, category: app_commands.Choice[str]):
-        category = category.value
+        category = category.value  # Get the selected category value
         user_id = interaction.user.id
         username = interaction.user.name
-        print(f"📥 Received /checkin command from {username} (ID: {user_id}) - Category: {category}")
 
-        # Acknowledge the command immediately
+        # Acknowledge the command to prevent timeout
         await interaction.response.defer()
-        print("✅ Response deferred.")
 
-        try:
-            print("📝 Adding user to database...")
-            await db.add_user(user_id, username)
-            print("✅ User added to database.")
-
-            print("📝 Logging check-in in database...")
-            await db.log_checkin(user_id, category, None)
-            print("✅ Check-in logged successfully.")
-
-            await interaction.followup.send(
-                f"✅ **{category.capitalize()} check-in started!** Please upload a photo."
-            )
-            print("📩 Follow-up message sent! Waiting for user image...")
-
-        except Exception as e:
-            print(f"❌ Database error: {e}")
-            await interaction.followup.send("❌ An error occurred while logging your check-in. Please try again.")
+        # Check cooldown before requesting an image
+        if await db.check_cooldown(user_id, category):
+            await interaction.followup.send(f"⏳ You have already checked in for **{category}** today. Try again tomorrow!")
             return
 
+        await interaction.followup.send(f"✅ **{category.capitalize()} check-in started!** Please upload a photo.")
+
         def check(m):
-            return m.author.id == interaction.user.id and m.attachments  # Check if user sends an image
+            return m.author.id == interaction.user.id and m.attachments  # Ensure user sends an image
 
         try:
-            print("⏳ Waiting for user to upload an image...")
-            message = await self.bot.wait_for("message", timeout=60.0, check=check)
-            print("📷 Image received! Processing...")
-
+            message = await self.bot.wait_for("message", timeout=60.0, check=check)  # Wait for user image upload
             attachment = message.attachments[0]
 
-            if not attachment.content_type.startswith("image/"):
+            if not attachment.content_type.startswith("image/"):  # Ensure uploaded file is an image
                 await interaction.followup.send("❌ That’s not an image! Please upload a valid photo.")
                 return
 
             image_bytes = await attachment.read()
             image_hash = self.hash_image(image_bytes)
-            print(f"🔍 Image hashed: {image_hash}")
 
-            # Ensure user doesn't reuse the same image
+            # Check if user has already used this image before
             async with db.pool.acquire() as conn:
                 existing_checkin = await conn.fetchrow("""
                     SELECT * FROM checkins WHERE user_id = $1 AND image_hash = $2
                 """, user_id, image_hash)
 
             if existing_checkin:
-                await interaction.followup.send(
-                    "⚠️ You have already used this image for a check-in. Please upload a new one.")
+                await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
                 return
 
-            # Log the check-in with image hash
-            await db.log_checkin(user_id, category, image_hash)
-            await interaction.followup.send(f"✅ {category.capitalize()} check-in **completed!** You earned 1 point.")
+            # Now log check-in after image upload is confirmed
+            result = await db.log_checkin(user_id, category, image_hash)
+
+            if result == "success":
+                await interaction.followup.send(f"✅ {category.capitalize()} check-in **completed!** You earned 1 point.")
+            elif result == "cooldown":
+                await interaction.followup.send(f"⏳ You have already checked in for **{category}** today. Try again tomorrow!")
+            else:
+                await interaction.followup.send("❌ There was an error logging your check-in. Please try again.")
 
         except asyncio.TimeoutError:
             await interaction.followup.send("⏳ You took too long to upload an image. Please try again.")
-            print("❌ Timeout! User didn't upload an image.")
-
-        except Exception as e:
-            print(f"❌ Error processing image: {e}")
-            await interaction.followup.send("❌ An unexpected error occurred. Please try again.")
-
 
 async def setup(bot):
     await bot.add_cog(CheckIn(bot))
