@@ -26,32 +26,46 @@ class CheckIn(commands.Cog):
         user_id = interaction.user.id
         username = interaction.user.name
 
-        # Acknowledge the command to prevent timeout
         await interaction.response.defer()
 
-        # Check cooldown and notify the user if they need to wait
+        # Check cooldown
         cooldown_message = await db.check_cooldown(user_id, category)
         if cooldown_message:
             await interaction.followup.send(cooldown_message)
             return
 
+        workout = None  # Default to None unless user inputs it
+
+        # If category is gym, ask for the workout type
+        if category == "gym":
+            await interaction.followup.send("🏋️ **Which workout did you do?** Please type it below.")
+
+            def workout_check(m):
+                return m.author.id == user_id and isinstance(m.content, str)
+
+            try:
+                workout_msg = await self.bot.wait_for("message", timeout=30.0, check=workout_check)
+                workout = workout_msg.content  # Store the workout input
+            except asyncio.TimeoutError:
+                await interaction.followup.send("⏳ You took too long to enter a workout. Please try again.")
+                return
+
         await interaction.followup.send(f"✅ **{category.capitalize()} check-in started!** Please upload a photo.")
 
         def check(m):
-            return m.author.id == interaction.user.id and m.attachments  # Ensure user sends an image
+            return m.author.id == interaction.user.id and m.attachments
 
         try:
-            message = await self.bot.wait_for("message", timeout=60.0, check=check)  # Wait for user image upload
+            message = await self.bot.wait_for("message", timeout=60.0, check=check)
             attachment = message.attachments[0]
 
-            if not attachment.content_type.startswith("image/"):  # Ensure uploaded file is an image
+            if not attachment.content_type.startswith("image/"):
                 await interaction.followup.send("❌ That’s not an image! Please upload a valid photo.")
                 return
 
             image_bytes = await attachment.read()
             image_hash = self.hash_image(image_bytes)
 
-            # Check if user has already used this image before
             async with db.pool.acquire() as conn:
                 existing_checkin = await conn.fetchrow("""
                     SELECT * FROM checkins WHERE user_id = $1 AND image_hash = $2
@@ -61,8 +75,8 @@ class CheckIn(commands.Cog):
                 await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
                 return
 
-            # Now log check-in after image upload is confirmed
-            result = await db.log_checkin(user_id, category, image_hash)
+            # Log check-in with the workout type
+            result = await db.log_checkin(user_id, category, image_hash, workout)
 
             if result == "success":
                 await interaction.followup.send(f"✅ {category.capitalize()} check-in **completed!** You earned 1 point.")

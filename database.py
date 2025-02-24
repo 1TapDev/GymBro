@@ -80,7 +80,7 @@ class Database:
             except Exception as e:
                 print(f"❌ Error adding user {username}: {e}")
 
-    async def log_checkin(self, user_id, category, image_hash):
+    async def log_checkin(self, user_id, category, image_hash, workout=None):
         """Log a check-in only after the image is confirmed, and update points dynamically."""
         async with self.pool.acquire() as conn:
             try:
@@ -90,16 +90,16 @@ class Database:
 
                 print(f"📝 Logging check-in for user {user_id} in category {category} with image hash {image_hash}...")
 
-                # Ensure an image is provided
                 if not image_hash:
                     print("❌ No valid image uploaded. Check-in will NOT be recorded.")
                     return "no_image"
 
                 # Insert check-in record **only after image is provided**
                 await conn.execute("""
-                    INSERT INTO checkins (user_id, category, image_hash, timestamp)
-                    VALUES ($1, $2, $3, NOW())
-                """, user_id, category, image_hash)
+                    INSERT INTO checkins (user_id, category, image_hash, workout, timestamp)
+                    VALUES ($1, $2, $3, $4, NOW())
+                """, user_id, category, image_hash, workout)
+
                 print("✅ Check-in recorded successfully!")
 
                 # Update progress tracking
@@ -150,62 +150,30 @@ class Database:
         """Retrieve user progress (total check-ins, food logs, weight change)."""
         async with self.pool.acquire() as conn:
             try:
-                return await conn.fetchrow("""
+                print(f"📊 Fetching progress for user {user_id}...")
+                result = await conn.fetchrow("""
                     SELECT total_gym_checkins, total_food_logs, total_weight_change
                     FROM progress WHERE user_id = $1
                 """, user_id)
+                print(f"✅ Progress retrieved: {result}")
+                return result
             except Exception as e:
-                return None  # Return None if there's an error instead of printing
+                print(f"❌ Error fetching progress: {e}")
 
     async def update_pr(self, user_id, lift, value):
-        """Update the user's personal record (PR) for deadlift, bench, or squat, ensuring they have an entry."""
+        """Update the user's personal record (PR) for deadlift, bench, or squat."""
         async with self.pool.acquire() as conn:
-            try:
-                print(f"📝 Checking if user {user_id} has a personal record entry...")
-
-                # Ensure user exists in `personal_records` before updating
-                await conn.execute("""
-                    INSERT INTO personal_records (user_id, deadlift, bench, squat)
-                    VALUES ($1, 0, 0, 0)
-                    ON CONFLICT (user_id) DO NOTHING;
-                """, user_id)
-                print(f"✅ Ensured PR row exists for user {user_id}.")
-
-                # Now update the PR value for the specific lift
-                update_query = f"""
-                    UPDATE personal_records 
-                    SET {lift} = $1 
-                    WHERE user_id = $2;
-                """
-                await conn.execute(update_query, value, user_id)
-
-                print(f"✅ PR successfully updated for {user_id}: {lift.capitalize()} set to {value} lbs.")
-
-                # Fetch updated PR record to verify the change
-                pr_after_update = await self.get_personal_records(user_id)
-                print(f"✅ PR after update for {user_id}: {pr_after_update}")
-
-            except Exception as e:
-                print(f"❌ Error updating PR for {user_id}: {e}")
+            if lift in ["deadlift", "bench", "squat"]:
+                await conn.execute(f"""
+                    UPDATE personal_records SET {lift} = $1 WHERE user_id = $2
+                """, value, user_id)
 
     async def get_personal_records(self, user_id):
-        """Retrieve a user's personal records (PRs), ensuring defaults if not found."""
+        """Retrieve a user's personal records (PRs)."""
         async with self.pool.acquire() as conn:
-            try:
-                print(f"🔍 Retrieving PR records from database for user {user_id}...")
-                record = await conn.fetchrow("""
-                    SELECT deadlift, bench, squat FROM personal_records WHERE user_id = $1
-                """, user_id)
-
-                if not record:
-                    print(f"⚠️ No personal records found for {user_id}. Returning defaults (0s).")
-                    return {"deadlift": 0, "bench": 0, "squat": 0}  # Default PRs
-
-                print(f"✅ PR records retrieved for user {user_id}: {record}")
-                return dict(record)  # Convert asyncpg Record to dictionary
-            except Exception as e:
-                print(f"❌ Error retrieving PR records for {user_id}: {e}")
-                return {"deadlift": 0, "bench": 0, "squat": 0}  # Return defaults on error
+            return await conn.fetchrow("""
+                SELECT deadlift, bench, squat FROM personal_records WHERE user_id = $1
+            """, user_id)
 
     async def get_leaderboard(self):
         """Retrieve the top 10 users by points."""
