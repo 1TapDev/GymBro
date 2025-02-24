@@ -63,7 +63,6 @@ class Database:
                 print(f"❌ Error checking cooldown for user {user_id}: {e}")
                 return None
 
-
     async def close(self):
         """Close the database connection."""
         if self.pool:
@@ -83,25 +82,25 @@ class Database:
             except Exception as e:
                 print(f"❌ Error adding user {username}: {e}")
 
-    async def log_checkin(self, user_id, category, image_hash, workout=None, weight=None, meal=None):
-        """Log a check-in only after the image is confirmed, and update points dynamically."""
+    async def log_checkin(self, user_id, category, image_hash, image_path, workout=None, weight=None, meal=None):
+        """Log a check-in only after the image is confirmed, store image path, and update points dynamically."""
         async with self.pool.acquire() as conn:
             try:
                 if await self.check_cooldown(user_id, category):
                     print(f"⏳ User {user_id} is still on cooldown for {category}. Check-in denied.")
                     return "cooldown"
 
-                print(f"📝 Logging check-in for user {user_id} in category {category} with image hash {image_hash}...")
+                print(f"📝 Logging check-in for user {user_id} in category {category} with image path {image_path}...")
 
                 if not image_hash:
                     print("❌ No valid image uploaded. Check-in will NOT be recorded.")
                     return "no_image"
 
-                # Insert check-in record, storing meal if applicable
+                # Insert check-in record, storing meal, weight, workout, and image path
                 await conn.execute("""
-                    INSERT INTO checkins (user_id, category, image_hash, workout, weight, meal, timestamp)
-                    VALUES ($1, $2, $3, $4, $5, $6, NOW())
-                """, user_id, category, image_hash, workout, weight, meal)
+                    INSERT INTO checkins (user_id, category, image_hash, image_path, workout, weight, meal, timestamp)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                """, user_id, category, image_hash, image_path, workout, weight, meal)
 
                 print("✅ Check-in recorded successfully!")
 

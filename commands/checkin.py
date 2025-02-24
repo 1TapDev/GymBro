@@ -3,7 +3,11 @@ from discord import app_commands
 from discord.ext import commands
 import asyncio
 import hashlib  # Used for detecting reused images
+import os  # Used for handling file paths
 from database import db
+
+# Folder to store images
+IMAGE_FOLDER = "checkin_images"
 
 class CheckIn(commands.Cog):
     def __init__(self, bot):
@@ -12,6 +16,17 @@ class CheckIn(commands.Cog):
 
     def hash_image(self, image_bytes):
         return hashlib.md5(image_bytes).hexdigest()  # Generates a hash for the image
+
+    def save_image_locally(self, user_id, image_hash, image_bytes):
+        """Save image in a user-specific folder with a hashed filename and return the file path."""
+        user_folder = os.path.join(IMAGE_FOLDER, str(user_id))  # Folder for each user
+        os.makedirs(user_folder, exist_ok=True)  # Ensure the folder exists
+
+        image_path = os.path.join(user_folder, f"{image_hash}.jpg")  # Save as JPG
+        with open(image_path, "wb") as f:
+            f.write(image_bytes)
+
+        return image_path  # Return saved file path
 
     @app_commands.command(name="checkin", description="Log a check-in for gym, weight, or food.")
     @app_commands.choices(
@@ -99,6 +114,9 @@ class CheckIn(commands.Cog):
             image_bytes = await attachment.read()
             image_hash = self.hash_image(image_bytes)
 
+            # Save image locally and get its path
+            image_path = self.save_image_locally(user_id, image_hash, image_bytes)
+
             async with db.pool.acquire() as conn:
                 existing_checkin = await conn.fetchrow("""
                     SELECT * FROM checkins WHERE user_id = $1 AND image_hash = $2
@@ -108,8 +126,8 @@ class CheckIn(commands.Cog):
                 await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
                 return
 
-            # Log check-in with the meal, weight, or workout type
-            result = await db.log_checkin(user_id, category, image_hash, workout, weight, meal)
+            # Log check-in with the image path
+            result = await db.log_checkin(user_id, category, image_hash, image_path, workout, weight, meal)
 
             if result == "success":
                 await interaction.followup.send(f"✅ {category.capitalize()} check-in **completed!** You earned 1 point.")
