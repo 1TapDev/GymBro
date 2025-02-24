@@ -104,6 +104,19 @@ Contributions are welcome!
 
 ---
 
+## 🚀 Upcoming Features & Fixes
+| Feature/Fix | Status      |
+|------------|-------------|
+| ✅ Fix cooldown for gym & food check-ins | Completed   |
+| ⏳  | In Progress |
+| ⏳  | Planned     |
+---
+
+### 📢 Have a feature request?  
+Submit an issue on **[GitHub](https://github.com/1TapDev/GymBro/issues)**!
+
+---
+
 ## 🐜 License
 This project is **open-source** under the **MIT License**.
 
