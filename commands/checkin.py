@@ -29,9 +29,10 @@ class CheckIn(commands.Cog):
         # Acknowledge the command to prevent timeout
         await interaction.response.defer()
 
-        # Check cooldown before requesting an image
-        if await db.check_cooldown(user_id, category):
-            await interaction.followup.send(f"⏳ You have already checked in for **{category}** today. Try again tomorrow!")
+        # Check cooldown and notify the user if they need to wait
+        cooldown_message = await db.check_cooldown(user_id, category)
+        if cooldown_message:
+            await interaction.followup.send(cooldown_message)
             return
 
         await interaction.followup.send(f"✅ **{category.capitalize()} check-in started!** Please upload a photo.")

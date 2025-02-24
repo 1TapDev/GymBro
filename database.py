@@ -1,6 +1,9 @@
 import asyncpg
 import os
+import pytz  # Library for timezone conversion
 from datetime import datetime, timedelta
+
+EST = pytz.timezone("America/New_York")  # Define Eastern Standard Time
 
 class Database:
     def __init__(self):
@@ -15,7 +18,7 @@ class Database:
             print(f"❌ Database connection failed: {e}")  # Log failure
 
     async def check_cooldown(self, user_id, category):
-        """Check if a user is on cooldown by reading the timestamp from the checkins table."""
+        """Check if a user is on cooldown by reading the timestamp from the checkins table (in EST)."""
         async with self.pool.acquire() as conn:
             try:
                 last_checkin = await conn.fetchrow("""
@@ -24,22 +27,47 @@ class Database:
                     ORDER BY timestamp DESC LIMIT 1
                 """, user_id, category)
 
+                # Get current time in UTC and convert to EST
+                current_time_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
+                current_time_est = current_time_utc.astimezone(EST)
+
+                print(f"🕒 Current Time (EST): {current_time_est}")
+
                 if last_checkin:
-                    last_checkin_date = last_checkin["timestamp"].date()
-                    current_date = datetime.utcnow().date()
+                    # Convert last check-in timestamp to EST
+                    last_checkin_time_utc = last_checkin["timestamp"].replace(tzinfo=pytz.utc)
+                    last_checkin_time_est = last_checkin_time_utc.astimezone(EST)
 
-                    # Gym & Food: Can check in once per **calendar day**
-                    if category in ["gym", "food"] and last_checkin_date == current_date:
-                        return True  # Still on cooldown for today
+                    print(f"📅 Last Check-in Time for {category} (EST): {last_checkin_time_est}")
 
-                    # Weight: Can check in once per **week**
-                    if category == "weight" and last_checkin_date >= current_date - timedelta(days=7):
-                        return True  # Still on cooldown for the week
+                    if category in ["gym", "food"]:
+                        # Get midnight EST for the next day
+                        next_available_time = datetime.combine(last_checkin_time_est.date() + timedelta(days=1),
+                                                               datetime.min.time(), EST)
+                        print(f"⏳ Next Available Check-in Time (EST): {next_available_time}")
 
-                return False  # No cooldown, can check in
+                        if current_time_est < next_available_time:
+                            remaining_time = next_available_time - current_time_est
+                            hours, minutes = divmod(int(remaining_time.total_seconds()) // 60, 60)
+                            return f"⏳ You have already checked in for **{category}** today. Try again in **{hours}h {minutes}m**."
+
+                    elif category == "weight":
+                        # Get the next available weight check-in time (7 days later)
+                        next_available_time = last_checkin_time_est + timedelta(days=7)
+                        print(f"📆 Next Weight Check-in Allowed (EST): {next_available_time}")
+
+                        if current_time_est < next_available_time:
+                            remaining_time = next_available_time - current_time_est
+                            days, remainder = divmod(int(remaining_time.total_seconds()), 86400)
+                            hours, minutes = divmod(remainder // 60, 60)
+                            return f"⏳ You have already checked in for **{category}** this week. Try again in **{days}d {hours}h {minutes}m**."
+
+                print("✅ No cooldown detected, user can check in.")
+                return None  # No cooldown, user can check in
+
             except Exception as e:
                 print(f"❌ Error checking cooldown for user {user_id}: {e}")
-                return False
+                return None
 
     async def close(self):
         """Close the database connection."""
