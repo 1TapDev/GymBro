@@ -45,7 +45,7 @@ class ViewCheckIn(commands.Cog):
             print(f"Error in view_checkins: {e}")  # Debugging output
 
     async def send_checkin_page(self, interaction, checkins, page, category):
-        """Displays a paginated view of the check-ins, only processing images for the current page."""
+        """Edits the original message to update the check-in page."""
         try:
             total_pages = math.ceil(len(checkins) / CHECKINS_PER_PAGE)
             start_idx = page * CHECKINS_PER_PAGE
@@ -84,13 +84,14 @@ class ViewCheckIn(commands.Cog):
             # Add pagination buttons if there are multiple pages
             view = None
             if total_pages > 1:
-                view = PaginationButtons(self, checkins, page, category)
+                view = PaginationButtons(self, checkins, page, category, interaction.user.id)
 
-            await interaction.followup.send(embed=embed, files=image_files, view=view)
+            # ✅ Use `edit_original_response()` to update message
+            await interaction.edit_original_response(embed=embed, attachments=image_files, view=view)
 
         except Exception as e:
+            print(f"Error in send_checkin_page: {e}")
             await interaction.followup.send(f"❌ An error occurred while displaying the check-ins: {str(e)}")
-            print(f"Error in send_checkin_page: {e}")  # Debugging output
 
     def resize_image(self, image_path):
         """Resize image to fit within Discord's payload limits."""
@@ -109,27 +110,36 @@ class ViewCheckIn(commands.Cog):
 class PaginationButtons(discord.ui.View):
     """Handles pagination buttons for check-ins."""
 
-    def __init__(self, cog, checkins, page, category):
-        super().__init__()
+    def __init__(self, cog, checkins, page, category, user_id):
+        super().__init__(timeout=600)  # 10-minute timeout
         self.cog = cog
         self.checkins = checkins
         self.page = page
         self.category = category
+        self.user_id = user_id  # Restrict button clicks to the original user
 
         # Enable or disable buttons based on current page
         self.previous.disabled = page == 0
         self.next.disabled = (page + 1) * CHECKINS_PER_PAGE >= len(checkins)
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Ensures only the command user can navigate the pages."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("🚫 You can only navigate your own check-ins!", ephemeral=True)
+            return False
+        return True
+
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, custom_id="prev_page")
     async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Handles Previous Page button."""
+        await interaction.response.defer()  # Defer to prevent timeout
         await self.cog.send_checkin_page(interaction, self.checkins, self.page - 1, self.category)
 
     @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, custom_id="next_page")
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Handles Next Page button."""
+        await interaction.response.defer()  # Defer to prevent timeout
         await self.cog.send_checkin_page(interaction, self.checkins, self.page + 1, self.category)
-
 
 async def setup(bot):
     await bot.add_cog(ViewCheckIn(bot))
