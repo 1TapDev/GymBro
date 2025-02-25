@@ -10,6 +10,7 @@ class Points(commands.Cog):
     @app_commands.command(name="points", description="Check how many points you have.")
     async def points(self, interaction: discord.Interaction):
         user_id = interaction.user.id
+        user_mention = interaction.user.mention  # Mention the user
         print(f"📊 Fetching points for user {user_id}...")
 
         async with db.pool.acquire() as conn:
@@ -18,9 +19,19 @@ class Points(commands.Cog):
             """, user_id)
 
         if points is None:
-            await interaction.response.send_message("❌ You don't have any points yet!")
+            embed = discord.Embed(
+                title="🏆 Points Check",
+                description=f"{user_mention}, you don't have any points yet! ❌",
+                color=discord.Color.red()
+            )
         else:
-            await interaction.response.send_message(f"🏆 You currently have **{points} points!**")
+            embed = discord.Embed(
+                title="🏆 Points Check",
+                description=f"{user_mention}, you currently have **{points} points!** 🎉",
+                color=discord.Color.gold()
+            )
+
+        await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Points(bot))
