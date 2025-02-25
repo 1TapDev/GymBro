@@ -56,13 +56,12 @@ class ViewCheckIn(commands.Cog):
                 title=f"📜 {category.capitalize()} Check-Ins (Page {page+1}/{total_pages})",
                 color=discord.Color.blue()
             )
-            embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
 
             image_files = []  # Store images for this page only
 
             for idx, checkin in enumerate(checkins_on_page, start=start_idx + 1):
                 timestamp = checkin["timestamp"].strftime("%Y-%m-%d %H:%M")
-                details = f"**{idx}. {timestamp}**\n"
+                details = f"**{timestamp}**\n"
 
                 if category == "gym":
                     details += f"🏋️ **Workout:** {checkin['workout']}\n"
@@ -71,7 +70,7 @@ class ViewCheckIn(commands.Cog):
                 elif category == "food":
                     details += f"🍽️ **Meal:** {checkin['meal']}\n"
 
-                embed.add_field(name="‎", value=details, inline=False)
+                embed.add_field(name="", value=details.strip(), inline=False)
 
                 # Attach only the images for the current page
                 if checkin["image_path"]:
@@ -86,7 +85,6 @@ class ViewCheckIn(commands.Cog):
             if total_pages > 1:
                 view = PaginationButtons(self, checkins, page, category, interaction.user.id)
 
-            # ✅ Use `edit_original_response()` to update message
             await interaction.edit_original_response(embed=embed, attachments=image_files, view=view)
 
         except Exception as e:
