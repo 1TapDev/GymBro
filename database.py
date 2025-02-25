@@ -178,6 +178,37 @@ class Database:
                 SELECT deadlift, bench, squat FROM personal_records WHERE user_id = $1
             """, user_id)
 
+    async def get_weight_checkins(self, user_id):
+        """Retrieve all weight check-ins for a user, sorted by timestamp (oldest to newest)."""
+        async with self.pool.acquire() as conn:
+            try:
+                weight_entries = await conn.fetch("""
+                    SELECT weight, timestamp FROM checkins 
+                    WHERE user_id = $1 AND category = 'weight'
+                    ORDER BY timestamp ASC
+                """, user_id)
+                return weight_entries
+            except Exception as e:
+                print(f"❌ Error fetching weight check-ins for user {user_id}: {e}")
+                return []
+
+    async def get_pr_rankings(self):
+        """Retrieve the top 8 users for each PR category."""
+        async with self.pool.acquire() as conn:
+            rankings = {}
+
+            for lift in ["deadlift", "bench", "squat"]:
+                rows = await conn.fetch(f"""
+                    SELECT user_id, {lift} FROM personal_records
+                    WHERE {lift} IS NOT NULL
+                    ORDER BY {lift} DESC
+                    LIMIT 8
+                """)
+
+                rankings[lift] = [(row["user_id"], row[lift]) for row in rows]
+
+            return rankings
+
     async def get_leaderboard(self):
         """Retrieve the top 10 users by points."""
         async with self.pool.acquire() as conn:
