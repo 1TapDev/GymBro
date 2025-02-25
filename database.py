@@ -163,6 +163,21 @@ class Database:
             except Exception as e:
                 print(f"❌ Error fetching progress: {e}")
 
+    async def get_user_checkins(self, user_id, category):
+        """Retrieve check-in history for a user based on category, including image paths."""
+        async with self.pool.acquire() as conn:
+            try:
+                checkins = await conn.fetch("""
+                    SELECT timestamp, workout, weight, meal, image_path FROM checkins 
+                    WHERE user_id = $1 AND category = $2 
+                    ORDER BY timestamp DESC
+                """, user_id, category)
+
+                return checkins
+            except Exception as e:
+                print(f"❌ Error fetching check-ins for user {user_id}: {e}")
+                return []
+
     async def update_pr(self, user_id, lift, value):
         """Update the user's personal record (PR) for deadlift, bench, or squat."""
         async with self.pool.acquire() as conn:
