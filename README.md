@@ -76,8 +76,7 @@ python main.py
 | `/progress` | View total check-ins, weight logs, and improvements. |
 | `/pr set deadlift <number>` | Set new deadlift PR. |
 | `/pr set bench <number>` | Set new bench press PR. |
-| `/pr set squat <number>` | Set new squat PR. |
-| `/pr` | View all personal records. |
+| `/pr set squat <number>` | Set new squat PR. | 
 
 ### **🏆 Leaderboard & Points**
 | Command      | Description |
@@ -105,11 +104,24 @@ Contributions are welcome!
 ---
 
 ## 🚀 Upcoming Features & Fixes
-| Feature/Fix | Status      |
-|------------|-------------|
-| ✅ Fix cooldown for gym & food check-ins | Completed   |
-| ⏳  | In Progress |
-| ⏳  | Planned     |
+| Feature/Fix                                                                    | Status      |
+|--------------------------------------------------------------------------------|-------------|
+| ⏳ Challenges System – Weekly or monthly challenges for gym consistency, weight goals, or meal tracking.                                                                   | Planned     |
+| ⏳ Removing database.py and moving each function to its respective .py file.    | Planned     |
+| ⏳ Improve organization and modularity of functions after removing database.py. | Planned     |
+| ⏳ Ensure Persistent Data Logging – Prevent accidental data loss from unexpected shutdowns.    | Planned     |
+| ⏳ Gym Streaks System – Reward users who check in consistently without missing days.    | Planned     |
+| ⏳ Advanced Progress Reports – Generate weekly/monthly summaries of gym activity & weight trends.    | Planned     |
+| ⏳ Customizable Check-in Messages – Users can personalize check-in responses.    | Planned     |
+| ⏳ BMI & Body Fat Estimation – Provide additional weight-based insights.    | Planned     |
+| ⏳ Reminders & Accountability Alerts – Automatic DM reminders to users who miss check-ins.  | Planned     |
+| ⏳ Daily Summary DM Option – Users can opt-in for daily progress reports via DM. | Planned     |
+| ⏳ Add Workout Types to Check-Ins – Allow users to specify cardio, strength, or flexibility workouts. | Planned     |
+| ⏳ Calendar View for Check-ins – Visual representation of check-in history. | Planned     |
+| ⏳ Calendar View for Check-ins – Visual representation of check-in history. | Planned     |
+| ⏳ Calendar View for Check-ins – Visual representation of check-in history. | Planned     |
+| ⏳ Calendar View for Check-ins – Visual representation of check-in history. | Planned     |
+
 ---
 
 ### 📢 Have a feature request?  

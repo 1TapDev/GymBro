@@ -49,67 +49,60 @@ class CheckIn(commands.Cog):
             await interaction.followup.send(cooldown_message)
             return
 
-        workout = None  # Default to None unless user inputs it
-        weight = None  # Default to None for weight logging
-        meal = None  # Default to None for food logging
-
-        # If category is gym, ask for the workout type
+        # Require a message input before image upload
+        response_text = None
         if category == "gym":
-            await interaction.followup.send("🏋️ **Which workout did you do?** Please type it below.")
+            prompt_text = "🏋️ **Which workout did you do?** Please type it below."
+        elif category == "weight":
+            prompt_text = "⚖️ **Please enter your weight in pounds (e.g., 175.5):**"
+        elif category == "food":
+            prompt_text = "🍽️ **What meal did you have?** Please describe it."
 
-            def workout_check(m):
-                return m.author.id == user_id and isinstance(m.content, str)
+        await interaction.followup.send(prompt_text)
 
+        def text_check(m):
+            return (
+                m.author.id == user_id
+                and isinstance(m.content, str)
+                and not m.attachments  # Ensure no images are included
+            )
+
+        while True:
             try:
-                workout_msg = await self.bot.wait_for("message", timeout=30.0, check=workout_check)
-                workout = workout_msg.content  # Store the workout input
+                message = await self.bot.wait_for("message", timeout=30.0)
+
+                # If the message contains an attachment (image), send an error message and retry
+                if message.attachments:
+                    await interaction.followup.send("❌ **Please type your response instead of uploading an image.** Try again.")
+                    continue
+
+                if text_check(message):  # Valid text input
+                    response_text = message.content
+                    break
+
             except asyncio.TimeoutError:
-                await interaction.followup.send("⏳ You took too long to enter a workout. Please try again.")
+                await interaction.followup.send("⏳ You took too long to enter a response. Please try again.")
                 return
 
-        # If category is weight, ask for weight input
+        # If weight check-in, ensure the input is a valid number
         if category == "weight":
-            await interaction.followup.send("⚖️ **Please enter your weight in pounds (e.g., 175.5):**")
-
-            def weight_check(m):
-                return m.author.id == user_id and m.content.replace(".", "", 1).isdigit()
-
             try:
-                weight_msg = await self.bot.wait_for("message", timeout=30.0, check=weight_check)
-                weight = float(weight_msg.content)  # Convert weight to float
-            except asyncio.TimeoutError:
-                await interaction.followup.send("⏳ You took too long to enter your weight. Please try again.")
-                return
+                weight = float(response_text)
             except ValueError:
                 await interaction.followup.send("❌ Invalid weight input. Please enter a numeric value (e.g., 175.5).")
                 return
+        else:
+            weight = None
 
-        # If category is food, ask for meal description
-        if category == "food":
-            await interaction.followup.send("🍽️ **What meal did you have?** Please describe it.")
+        # Step 2: Require Image Upload AFTER Text Response
+        await interaction.followup.send(f"✅ **{category.capitalize()} check-in started!** Now, please upload a photo.")
 
-            def meal_check(m):
-                return m.author.id == user_id and isinstance(m.content, str)
-
-            try:
-                meal_msg = await self.bot.wait_for("message", timeout=30.0, check=meal_check)
-                meal = meal_msg.content  # Store the meal input
-            except asyncio.TimeoutError:
-                await interaction.followup.send("⏳ You took too long to enter your meal. Please try again.")
-                return
-
-        await interaction.followup.send(f"✅ **{category.capitalize()} check-in started!** Please upload a photo.")
-
-        def check(m):
-            return m.author.id == interaction.user.id and m.attachments
+        def image_check(m):
+            return m.author.id == user_id and any(a.content_type.startswith("image/") for a in m.attachments)
 
         try:
-            message = await self.bot.wait_for("message", timeout=60.0, check=check)
-            attachment = message.attachments[0]
-
-            if not attachment.content_type.startswith("image/"):
-                await interaction.followup.send("❌ That’s not an image! Please upload a valid photo.")
-                return
+            image_message = await self.bot.wait_for("message", timeout=60.0, check=image_check)
+            attachment = image_message.attachments[0]
 
             image_bytes = await attachment.read()
             image_hash = self.hash_image(image_bytes)
@@ -127,7 +120,7 @@ class CheckIn(commands.Cog):
                 return
 
             # Log check-in with the image path
-            result = await db.log_checkin(user_id, category, image_hash, image_path, workout, weight, meal)
+            result = await db.log_checkin(user_id, category, image_hash, image_path, response_text, weight)
 
             if result == "success":
                 await interaction.followup.send(f"✅ {category.capitalize()} check-in **completed!** You earned 1 point.")
