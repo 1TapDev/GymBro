@@ -96,7 +96,14 @@ class Database:
                     print("❌ No valid image uploaded. Check-in will NOT be recorded.")
                     return "no_image"
 
-                # Insert check-in record, storing meal, weight, workout, and image path
+                # Ensure user exists in progress table
+                await conn.execute("""
+                    INSERT INTO progress (user_id, total_gym_checkins, total_food_logs, total_weight_change)
+                    VALUES ($1, 0, 0, 0) 
+                    ON CONFLICT (user_id) DO NOTHING
+                """, user_id)
+
+                # Insert check-in record
                 await conn.execute("""
                     INSERT INTO checkins (user_id, category, image_hash, image_path, workout, weight, meal, timestamp)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
@@ -115,8 +122,7 @@ class Database:
                     """, user_id)
                 elif category == "weight":
                     await conn.execute("""
-                        UPDATE progress SET total_weight_change = total_weight_change + 1, last_logged_weight = $1 
-                        WHERE user_id = $2
+                        UPDATE progress SET total_weight_change = $1 WHERE user_id = $2
                     """, weight, user_id)
 
                 # Fetch updated points dynamically
@@ -150,18 +156,26 @@ class Database:
                 return 0
 
     async def get_progress(self, user_id):
-        """Retrieve user progress (total check-ins, food logs, weight change)."""
+        """Retrieve user progress directly from checkins table instead of relying on progress table."""
         async with self.pool.acquire() as conn:
             try:
-                print(f"📊 Fetching progress for user {user_id}...")
-                result = await conn.fetchrow("""
-                    SELECT total_gym_checkins, total_food_logs, total_weight_change
-                    FROM progress WHERE user_id = $1
-                """, user_id)
-                print(f"✅ Progress retrieved: {result}")
-                return result
+                # Count total gym check-ins from checkins table
+                total_gym_checkins = await conn.fetchval("""
+                    SELECT COUNT(*) FROM checkins WHERE user_id = $1 AND category = 'gym'
+                """, user_id) or 0
+
+                # Count total food logs from checkins table
+                total_food_logs = await conn.fetchval("""
+                    SELECT COUNT(*) FROM checkins WHERE user_id = $1 AND category = 'food'
+                """, user_id) or 0
+
+                return {
+                    "total_gym_checkins": total_gym_checkins,
+                    "total_food_logs": total_food_logs
+                }
             except Exception as e:
-                print(f"❌ Error fetching progress: {e}")
+                print(f"❌ Error fetching progress for user {user_id}: {e}")
+                return None
 
     async def get_user_checkins(self, user_id, category):
         """Retrieve check-in history for a user based on category, including image paths."""
