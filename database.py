@@ -210,18 +210,36 @@ class Database:
     async def get_weight_change(self, user_id):
         """Fetch first & most recent weight entries for progress tracking."""
         async with self.pool.acquire() as conn:
-            result = await conn.fetch("""
-                (SELECT weight FROM checkins WHERE user_id = $1 AND category = 'weight' ORDER BY timestamp ASC LIMIT 1)
-                UNION ALL
-                (SELECT weight FROM checkins WHERE user_id = $1 AND category = 'weight' ORDER BY timestamp DESC LIMIT 1);
-            """, user_id)
+            try:
+                print(f"🔍 Fetching weight change for user {user_id}...")
 
-            if len(result) == 2:
-                first_weight = float(result[0]["weight"])
-                recent_weight = float(result[1]["weight"])
-                weight_change = round(recent_weight - first_weight, 2)
-                return first_weight, recent_weight, weight_change
-            return None, None, None
+                result = await conn.fetch("""
+                    (SELECT weight, timestamp FROM checkins WHERE user_id = $1 AND category = 'weight' ORDER BY timestamp ASC LIMIT 1)
+                    UNION ALL
+                    (SELECT weight, timestamp FROM checkins WHERE user_id = $1 AND category = 'weight' ORDER BY timestamp DESC LIMIT 1);
+                """, user_id)
+
+                print(f"📊 Database returned {len(result)} weight entries for user {user_id}")
+
+                if result:
+                    for i, row in enumerate(result):
+                        print(f"🔹 Entry {i + 1}: Weight = {row['weight']}, Timestamp = {row['timestamp']}")
+
+                if len(result) == 2:
+                    first_weight = float(result[0]["weight"])
+                    recent_weight = float(result[1]["weight"])
+                    weight_change = round(recent_weight - first_weight, 2)
+
+                    print(
+                        f"⚖️ Weight Change Calculated: First Weight = {first_weight}, Recent Weight = {recent_weight}, Change = {weight_change}")
+                    return first_weight, recent_weight, weight_change
+
+                print(f"❌ Insufficient weight entries for user {user_id} (Needs at least 2)")
+                return None, None, None
+
+            except Exception as e:
+                print(f"❌ Error fetching weight change for user {user_id}: {e}")
+                return None, None, None
 
     async def get_pr_rankings(self):
         """Retrieve the top 8 users for each PR category."""
