@@ -265,4 +265,29 @@ class Database:
                 SELECT username, points FROM users ORDER BY points DESC LIMIT 10
             """)
 
+async def get_weekly_weight_changes(self):
+    """ Fetch top 3 users with the highest weight change in the last 7 days """
+    async with self.pool.acquire() as conn:
+        rows = await conn.fetch("""
+            WITH recent_weights AS (
+                SELECT 
+                    user_id, weight, timestamp,
+                    FIRST_VALUE(weight) OVER (PARTITION BY user_id ORDER BY timestamp ASC) AS first_weight,
+                    LAST_VALUE(weight) OVER (PARTITION BY user_id ORDER BY timestamp DESC) AS last_weight
+                FROM checkins
+                WHERE category = 'weight' 
+                AND timestamp >= NOW() - INTERVAL '7 days'
+            )
+            SELECT 
+                users.username, 
+                (MAX(last_weight) - MIN(first_weight)) AS weight_change
+            FROM recent_weights
+            JOIN users ON users.user_id = recent_weights.user_id
+            GROUP BY users.username
+            ORDER BY weight_change ASC  -- Sort by most weight lost
+            LIMIT 3;
+        """)
+
+        return [(row["username"], row["weight_change"]) for row in rows]
+
 db = Database()

@@ -4,6 +4,7 @@ import asyncio
 from discord.ext import commands
 from dotenv import load_dotenv
 from database import db
+from scheduler import start_scheduler
 
 load_dotenv()
 
@@ -20,9 +21,13 @@ class Client(commands.Bot): # Define a custom bot client class that inherits fro
             if filename.endswith(".py"):
                 await self.load_extension(f"commands.{filename[:-3]}")
 
-    async def on_ready(self): # Event that triggers when the bot successfully connects to Discord.
+    async def on_ready(self):
         print(f'✅ Logged on as {self.user}!')
-        await self.tree.sync()  # Sync slash commands
+        await self.tree.sync()
+
+        # Start APScheduler
+        start_scheduler(self)
+        print("⏰ APScheduler started: Weigh-In Reminder is active!")
 
     async def on_message(self, message):  # Prevents bot from responding to itself
         if message.author == self.user:
