@@ -5,16 +5,16 @@ from discord.ui import View, Button
 from database import db
 
 class ProgressView(View):
-    def __init__(self, user_id, progress_embed, pr_embed):
+    def __init__(self, target_user, progress_embed, pr_embed):
         super().__init__()
-        self.user_id = user_id
+        self.target_user = target_user  # Stores the mentioned user's ID
         self.progress_embed = progress_embed
         self.pr_embed = pr_embed
         self.current_page = 1
         self.update_buttons()
 
     async def interaction_check(self, interaction: discord.Interaction):
-        return interaction.user.id == self.user_id  # Ensure only the command user can interact
+        return True  # 🔥 Allow anyone to interact with the buttons!
 
     def update_buttons(self):
         """Enable or disable buttons based on the current page."""
@@ -41,14 +41,17 @@ class Progress(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="progress", description="View your fitness progress.")
-    async def progress(self, interaction: discord.Interaction):
-        user_id = interaction.user.id
+    @app_commands.command(name="progress", description="View your fitness progress or someone else's.")
+    async def progress(self, interaction: discord.Interaction, user: discord.Member = None):
+        target_user = user or interaction.user  # Defaults to command sender if no user is provided
+        user_id = target_user.id
+        user_mention = target_user.mention  # Mention the target user
+
         progress_data = await db.get_progress(user_id)
         pr_data = await db.get_personal_records(user_id)
 
         if not progress_data:
-            await interaction.response.send_message("📊 No progress data found. Start checking in to track progress!")
+            await interaction.response.send_message(f"📊 {user_mention} has no progress data yet!")
             return
 
         # Fetch general progress values
@@ -89,7 +92,7 @@ class Progress(commands.Cog):
 
         # Create **Page 1** Embed (General Progress)
         progress_embed = discord.Embed(
-            title="📊 Your Progress - (Page 1/2)",
+            title=f"📊 {target_user.display_name}'s Progress - (Page 1/2)",
             color=discord.Color.green()
         )
         progress_embed.add_field(name="💪 Gym Check-ins", value=f"{total_gym_checkins}", inline=True)
@@ -99,7 +102,7 @@ class Progress(commands.Cog):
 
         # Create **Page 2** Embed (PRs with Medals)
         pr_embed = discord.Embed(
-            title="🏆 Personal Records - (Page 2/2)",
+            title=f"🏆 {target_user.display_name}'s Personal Records - (Page 2/2)",
             color=discord.Color.gold()
         )
         pr_embed.add_field(name="🏋️‍♂️ Deadlift PR", value=f"{deadlift} lbs {deadlift_medal}", inline=True)
@@ -108,7 +111,7 @@ class Progress(commands.Cog):
         pr_embed.set_footer(text="Page 2/2 - Click 'Previous' for Check-ins")
 
         # Send response with View (Navigation Buttons)
-        view = ProgressView(user_id, progress_embed, pr_embed)
+        view = ProgressView(target_user, progress_embed, pr_embed)
         await interaction.response.send_message(embed=progress_embed, view=view)
 
 async def setup(bot):
