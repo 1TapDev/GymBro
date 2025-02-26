@@ -207,19 +207,21 @@ class Database:
                 SELECT deadlift, bench, squat FROM personal_records WHERE user_id = $1
             """, user_id)
 
-    async def get_weight_checkins(self, user_id):
-        """Retrieve all weight check-ins for a user, sorted by timestamp (oldest to newest)."""
+    async def get_weight_change(self, user_id):
+        """Fetch first & most recent weight entries for progress tracking."""
         async with self.pool.acquire() as conn:
-            try:
-                weight_entries = await conn.fetch("""
-                    SELECT weight, timestamp FROM checkins 
-                    WHERE user_id = $1 AND category = 'weight'
-                    ORDER BY timestamp ASC
-                """, user_id)
-                return weight_entries
-            except Exception as e:
-                print(f"❌ Error fetching weight check-ins for user {user_id}: {e}")
-                return []
+            result = await conn.fetch("""
+                (SELECT weight FROM checkins WHERE user_id = $1 AND category = 'weight' ORDER BY timestamp ASC LIMIT 1)
+                UNION ALL
+                (SELECT weight FROM checkins WHERE user_id = $1 AND category = 'weight' ORDER BY timestamp DESC LIMIT 1);
+            """, user_id)
+
+            if len(result) == 2:
+                first_weight = float(result[0]["weight"])
+                recent_weight = float(result[1]["weight"])
+                weight_change = round(recent_weight - first_weight, 2)
+                return first_weight, recent_weight, weight_change
+            return None, None, None
 
     async def get_pr_rankings(self):
         """Retrieve the top 8 users for each PR category."""

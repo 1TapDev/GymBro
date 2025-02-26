@@ -7,3 +7,11 @@ ALTER TABLE checkins ADD COLUMN meal TEXT DEFAULT NULL;
 
 --Image Saving Expansion
 ALTER TABLE checkins ADD COLUMN image_path TEXT;
+
+--ORDER BY timestamp DESC
+CREATE OR REPLACE VIEW checkins_desc AS
+SELECT * FROM checkins ORDER BY timestamp DESC;
+
+CREATE INDEX checkins_timestamp_desc_idx ON checkins (timestamp DESC);
+
+CREATE INDEX checkins_timestamp_desc_idx ON checkins (timestamp DESC);
