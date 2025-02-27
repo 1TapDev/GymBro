@@ -29,6 +29,16 @@ class Client(commands.Bot):
         start_scheduler(self)
         print("⏰ APScheduler started: Weigh-In Reminder is active!")
 
+        # ✅ **Set the bot's rich presence activity**
+        activity = discord.Activity(
+            type=discord.ActivityType.watching, 
+            name="Gym Check-ins 🏋️‍♂️"
+        )
+        await self.change_presence(activity=activity)
+
+        print("🎮 Rich Presence set: Watching Gym Check-ins 🏋️‍♂️")
+
+
     async def close(self):
         print("🔴 Shutting down bot...")
         await db.close()
