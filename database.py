@@ -82,7 +82,8 @@ class Database:
             except Exception as e:
                 print(f"❌ Error adding user {username}: {e}")
 
-    async def log_checkin(self, user_id, category, image_hash, image_path, workout=None, weight=None, meal=None):
+    async def log_checkin(self, user_id, username, category, image_hash, image_path, workout=None, weight=None,
+                          meal=None):
         """Log a check-in only after the image is confirmed, store image path, and update points dynamically."""
         async with self.pool.acquire() as conn:
             try:
@@ -90,18 +91,20 @@ class Database:
                     print(f"⏳ User {user_id} is still on cooldown for {category}. Check-in denied.")
                     return "cooldown"
 
-                print(f"📝 Logging check-in for user {user_id} in category {category} with image path {image_path}...")
+                print(
+                    f"📝 Logging check-in for user {user_id} ({username}) in category {category} with image path {image_path}...")
 
                 if not image_hash:
                     print("❌ No valid image uploaded. Check-in will NOT be recorded.")
                     return "no_image"
 
-                # ✅ Ensure user exists in `users` table before inserting check-ins
+                # ✅ Ensure user exists in `users` table before inserting check-ins and update username if it exists
                 await conn.execute("""
                     INSERT INTO users (user_id, username, points)
-                    VALUES ($1, 'Unknown', 0) 
-                    ON CONFLICT (user_id) DO NOTHING
-                """, user_id)
+                    VALUES ($1, $2, 0)
+                    ON CONFLICT (user_id) DO UPDATE 
+                    SET username = EXCLUDED.username
+                """, user_id, username)
 
                 # ✅ Ensure user exists in `progress` table before inserting check-in
                 await conn.execute("""
