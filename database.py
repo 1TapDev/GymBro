@@ -96,14 +96,21 @@ class Database:
                     print("❌ No valid image uploaded. Check-in will NOT be recorded.")
                     return "no_image"
 
-                # Ensure user exists in progress table
+                # ✅ Ensure user exists in `users` table before inserting check-ins
+                await conn.execute("""
+                    INSERT INTO users (user_id, username, points)
+                    VALUES ($1, 'Unknown', 0) 
+                    ON CONFLICT (user_id) DO NOTHING
+                """, user_id)
+
+                # ✅ Ensure user exists in `progress` table before inserting check-in
                 await conn.execute("""
                     INSERT INTO progress (user_id, total_gym_checkins, total_food_logs, total_weight_change)
                     VALUES ($1, 0, 0, 0) 
                     ON CONFLICT (user_id) DO NOTHING
                 """, user_id)
 
-                # Insert check-in record
+                # ✅ Insert check-in record
                 await conn.execute("""
                     INSERT INTO checkins (user_id, category, image_hash, image_path, workout, weight, meal, timestamp)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
@@ -111,7 +118,7 @@ class Database:
 
                 print("✅ Check-in recorded successfully!")
 
-                # Update progress tracking
+                # ✅ Update progress tracking
                 if category == "gym":
                     await conn.execute("""
                         UPDATE progress SET total_gym_checkins = total_gym_checkins + 1 WHERE user_id = $1
@@ -125,10 +132,10 @@ class Database:
                         UPDATE progress SET total_weight_change = $1 WHERE user_id = $2
                     """, weight, user_id)
 
-                # Fetch updated points dynamically
+                # ✅ Fetch updated points dynamically
                 updated_points = await self.get_user_points(user_id)
 
-                # Ensure points are updated in `users` table
+                # ✅ Ensure points are updated in `users` table
                 await conn.execute("""
                     UPDATE users SET points = $1 WHERE user_id = $2
                 """, updated_points, user_id)

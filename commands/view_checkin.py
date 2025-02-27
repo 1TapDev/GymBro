@@ -15,7 +15,8 @@ class ViewCheckIn(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="view_checkins", description="View your past check-ins for gym, weight, or food.")
+    @app_commands.command(name="view_checkins", description="View your or another user's check-ins for gym, weight, or food.")
+    @app_commands.describe(member="Mention a user to view their check-ins (leave blank to view yours)")
     @app_commands.choices(
         category=[
             app_commands.Choice(name="Gym 🏋️‍♂️", value="gym"),
@@ -23,28 +24,29 @@ class ViewCheckIn(commands.Cog):
             app_commands.Choice(name="Food 🍽️", value="food"),
         ]
     )
-    async def view_checkins(self, interaction: discord.Interaction, category: app_commands.Choice[str]):
+    async def view_checkins(self, interaction: discord.Interaction, category: app_commands.Choice[str], member: discord.Member = None):
         category = category.value  # Get selected category
-        user_id = interaction.user.id
+        target_user = member if member else interaction.user  # Default to self if no member is mentioned
+        target_user_id = target_user.id
 
         try:
             await interaction.response.defer()  # Prevents timeout
 
             # Fetch check-ins from the database
-            checkins = await db.get_user_checkins(user_id, category)
+            checkins = await db.get_user_checkins(target_user_id, category)
 
             if not checkins:
-                await interaction.followup.send(f"🚫 You have no {category} check-ins yet!")
+                await interaction.followup.send(f"🚫 {target_user.mention} has no {category} check-ins yet!")
                 return
 
             # Start with page 1
-            await self.send_checkin_page(interaction, checkins, page=0, category=category)
+            await self.send_checkin_page(interaction, checkins, page=0, category=category, target_user=target_user)
 
         except Exception as e:
             await interaction.followup.send(f"❌ An error occurred while fetching check-ins: {str(e)}")
             print(f"Error in view_checkins: {e}")  # Debugging output
 
-    async def send_checkin_page(self, interaction, checkins, page, category):
+    async def send_checkin_page(self, interaction, checkins, page, category, target_user):
         """Edits the original message to update the check-in page."""
         try:
             total_pages = math.ceil(len(checkins) / CHECKINS_PER_PAGE)
@@ -53,7 +55,7 @@ class ViewCheckIn(commands.Cog):
             checkins_on_page = checkins[start_idx:end_idx]
 
             embed = discord.Embed(
-                title=f"📜 {category.capitalize()} Check-Ins (Page {page+1}/{total_pages})",
+                title=f"📜 {target_user.display_name}'s {category.capitalize()} Check-Ins (Page {page+1}/{total_pages})",
                 color=discord.Color.blue()
             )
 
@@ -83,7 +85,7 @@ class ViewCheckIn(commands.Cog):
             # Add pagination buttons if there are multiple pages
             view = None
             if total_pages > 1:
-                view = PaginationButtons(self, checkins, page, category, interaction.user.id)
+                view = PaginationButtons(self, checkins, page, category, target_user)
 
             await interaction.edit_original_response(embed=embed, attachments=image_files, view=view)
 
@@ -108,36 +110,33 @@ class ViewCheckIn(commands.Cog):
 class PaginationButtons(discord.ui.View):
     """Handles pagination buttons for check-ins."""
 
-    def __init__(self, cog, checkins, page, category, user_id):
+    def __init__(self, cog, checkins, page, category, target_user):
         super().__init__(timeout=600)  # 10-minute timeout
         self.cog = cog
         self.checkins = checkins
         self.page = page
         self.category = category
-        self.user_id = user_id  # Restrict button clicks to the original user
+        self.target_user = target_user  # Store the user whose check-ins are being viewed
 
         # Enable or disable buttons based on current page
         self.previous.disabled = page == 0
         self.next.disabled = (page + 1) * CHECKINS_PER_PAGE >= len(checkins)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Ensures only the command user can navigate the pages."""
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("🚫 You can only navigate your own check-ins!", ephemeral=True)
-            return False
-        return True
+        """Allows **anyone** to navigate through the pages."""
+        return True  # 🔥 Anyone can now press Next/Previous!
 
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, custom_id="prev_page")
     async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Handles Previous Page button."""
         await interaction.response.defer()  # Defer to prevent timeout
-        await self.cog.send_checkin_page(interaction, self.checkins, self.page - 1, self.category)
+        await self.cog.send_checkin_page(interaction, self.checkins, self.page - 1, self.category, self.target_user)
 
     @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, custom_id="next_page")
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Handles Next Page button."""
         await interaction.response.defer()  # Defer to prevent timeout
-        await self.cog.send_checkin_page(interaction, self.checkins, self.page + 1, self.category)
+        await self.cog.send_checkin_page(interaction, self.checkins, self.page + 1, self.category, self.target_user)
 
 async def setup(bot):
     await bot.add_cog(ViewCheckIn(bot))
