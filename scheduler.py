@@ -31,8 +31,8 @@ async def fetch_top_weight_changes():
 
 async def send_weigh_in_reminder(bot):
     """ Sends a weigh-in reminder every Saturday at 12 PM EST as an embed. """
-    guild_id = 1343077263704592436  # Replace with your Discord server ID
-    channel_id = 1343077263704592439  # Replace with the channel where you want to send the message
+    guild_id = 1119801250230321273  # Replace with your Discord server ID
+    channel_id = 1235378047390187601  # Replace with the channel where you want to send the message
 
     guild = bot.get_guild(guild_id)
     if not guild:
