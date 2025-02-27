@@ -98,7 +98,7 @@ class Database:
                     print("❌ No valid image uploaded. Check-in will NOT be recorded.")
                     return "no_image"
 
-                # ✅ Ensure user exists in `users` table before inserting check-ins and update username if it exists
+                # ✅ Ensure user exists in `users` table before inserting check-ins and update username
                 await conn.execute("""
                     INSERT INTO users (user_id, username, points)
                     VALUES ($1, $2, 0)

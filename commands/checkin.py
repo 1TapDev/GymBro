@@ -62,21 +62,21 @@ class CheckIn(commands.Cog):
 
         def text_check(m):
             return (
-                m.author.id == user_id
-                and isinstance(m.content, str)
-                and not m.attachments  # Ensure no images are included
+                    m.author.id == user_id
+                    and isinstance(m.content, str)
+                    and not m.attachments  # Ensure no images are included
             )
 
         while True:
             try:
                 message = await self.bot.wait_for("message", timeout=30.0)
 
-                # If the message contains an attachment (image), send an error message and retry
                 if message.attachments:
-                    await interaction.followup.send("❌ **Please type your response instead of uploading an image.** Try again.")
+                    await interaction.followup.send(
+                        "❌ **Please type your response instead of uploading an image.** Try again.")
                     continue
 
-                if text_check(message):  # Valid text input
+                if text_check(message):
                     response_text = message.content
                     break
 
@@ -116,16 +116,30 @@ class CheckIn(commands.Cog):
                 """, user_id, image_hash)
 
             if existing_checkin:
-                await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
+                await interaction.followup.send(
+                    "⚠️ You have already used this image for a check-in. Please upload a new one.")
                 return
 
             # Log check-in with the image path
-            result = await db.log_checkin(user_id, category, image_hash, image_path, response_text, weight)
+            result = await db.log_checkin(user_id, username, category, image_hash, image_path, response_text, weight)
 
             if result == "success":
-                await interaction.followup.send(f"✅ {category.capitalize()} check-in **completed!** You earned 1 point.")
+                embed = discord.Embed(
+                    title=f"✅ {category.capitalize()} Check-In Completed!",
+                    description=f"**{username}** checked in for {category}.\n**{response_text}**",
+                    color=discord.Color.green(),
+                )
+                embed.set_image(url=attachment.url)  # Attach image
+                embed.set_footer(text="You earned 1 point!")
+
+                # Delete previous messages to reduce spam
+                await interaction.channel.purge(limit=10, check=lambda m: m.author.id == self.bot.user.id)
+
+                await interaction.followup.send(embed=embed)
+
             elif result == "cooldown":
-                await interaction.followup.send(f"⏳ You have already checked in for **{category}** today. Try again tomorrow!")
+                await interaction.followup.send(
+                    f"⏳ You have already checked in for **{category}** today. Try again tomorrow!")
             else:
                 await interaction.followup.send("❌ There was an error logging your check-in. Please try again.")
 
