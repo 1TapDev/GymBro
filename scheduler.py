@@ -1,13 +1,9 @@
 import discord
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from datetime import datetime
-from database import db  # Import your database methods
+from database import db
 
-# Define the scheduler
 scheduler = AsyncIOScheduler()
-
-# Set Timezone (Eastern Standard Time)
 EST = pytz.timezone("America/New_York")
 
 
@@ -34,7 +30,7 @@ async def fetch_top_weight_changes():
 
 
 async def send_weigh_in_reminder(bot):
-    """ Sends a weigh-in reminder every Saturday at 12 PM EST. """
+    """ Sends a weigh-in reminder every Saturday at 12 PM EST as an embed. """
     guild_id = 1343077263704592436  # Replace with your Discord server ID
     channel_id = 1343077263704592439  # Replace with the channel where you want to send the message
 
@@ -49,48 +45,40 @@ async def send_weigh_in_reminder(bot):
     # Fetch top 3 weight changes
     top_weight_changes = await fetch_top_weight_changes()
 
-    if top_weight_changes:
-        leaderboard_entries = []
-        medals = ["🥇", "🥈", "🥉"]
-        for idx, row in enumerate(top_weight_changes):
-            user = await bot.fetch_user(row["user_id"])
-            username = user.display_name if user else "Unknown"
-            first_weight = row["first_weight"]
-            recent_weight = row["recent_weight"]
-            weight_change = row["weight_change"]
+    # Generate leaderboard text
+    leaderboard_text = ""
+    medals = ["🥇", "🥈", "🥉"]
+    for idx, row in enumerate(top_weight_changes):
+        user = await bot.fetch_user(row["user_id"])
+        username = user.display_name if user else "Unknown"
+        first_weight = row["first_weight"]
+        recent_weight = row["recent_weight"]
+        weight_change = row["weight_change"]
+        trend_emoji = "🔼" if weight_change > 0 else "🔽"
 
-            # Adjust emoji based on weight change
-            trend_emoji = "🔼" if weight_change > 0 else "🔽"
+        leaderboard_text += f"{medals[idx]} **{username}** [{first_weight} → {recent_weight}] **{weight_change} lbs** {trend_emoji}\n"
 
-            leaderboard_entries.append(
-                f"{medals[idx]} **{username}** [{first_weight} → {recent_weight}] **{weight_change}** lbs {trend_emoji}"
-            )
-
-        leaderboard_text = "\n".join(leaderboard_entries)
-    else:
+    if not leaderboard_text:
         leaderboard_text = "No weigh-in data available for this week."
 
-    # Weigh-In Reminder Message
-    reminder_message = f"""
-📢 @everyone It's **Weigh-In Saturday**! ⚖️  
-Don't forget to log your weight check-in today!  
+    # Create Embed
+    embed = discord.Embed(
+        title="📢 It's Weigh-In Saturday! ⚖️",
+        description="Don't forget to log your weight check-in today!",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="📝 Log Your Weight", value="Use **`/checkin weight`** to log your weight now!", inline=False)
+    embed.add_field(name="🏆 Top 3 Weight Changes This Week", value=leaderboard_text, inline=False)
+    embed.set_footer(text="✅ Stay accountable! See you next week!")
 
-📝 **Use `/checkin weight` to log your weight now!**  
-
-#️⃣ **Top 3 Weight Changes This Week:**  
-{leaderboard_text}
-
-✅ **Stay accountable! See you next week!**
-"""
-
-    await channel.send(reminder_message)
+    await channel.send(content="@everyone", embed=embed)
 
 
 def start_scheduler(bot):
     """ Starts the APScheduler to send reminders every Saturday at 12 PM EST. """
     est = pytz.timezone("America/New_York")
 
-    # Schedule the weigh-in reminder for every Saturday at 12 PM EST
-    scheduler.add_job(send_weigh_in_reminder, "cron", day_of_week="wed", hour=1, minute=41, timezone=est, args=[bot])
+    scheduler.add_job(send_weigh_in_reminder, "cron", day_of_week="wed", hour=22, minute=4, timezone=est, args=[bot])
 
     scheduler.start()
+    print("⏰ Weigh-In Reminder Scheduled for Saturdays at 12 PM EST.")
