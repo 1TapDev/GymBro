@@ -78,7 +78,7 @@ def start_scheduler(bot):
     """ Starts the APScheduler to send reminders every Saturday at 12 PM EST. """
     est = pytz.timezone("America/New_York")
 
-    scheduler.add_job(send_weigh_in_reminder, "cron", day_of_week="wed", hour=22, minute=4, timezone=est, args=[bot])
+    scheduler.add_job(send_weigh_in_reminder, "cron", day_of_week="sat", hour=12, minute=0, timezone=est, args=[bot])
 
     scheduler.start()
     print("⏰ Weigh-In Reminder Scheduled for Saturdays at 12 PM EST.")
