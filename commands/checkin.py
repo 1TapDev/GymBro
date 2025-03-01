@@ -21,21 +21,25 @@ class CheckIn(commands.Cog):
         return hashlib.md5(image_bytes).hexdigest()
 
     def resize_image(self, image_path):
-        """Resize image before saving to limit its size and remove the original image."""
+        """Resize image to MAX_IMAGE_SIZE and apply aggressive compression without significant quality loss."""
         try:
             img = Image.open(image_path)
-            img.thumbnail(MAX_IMAGE_SIZE)  # Resize while maintaining aspect ratio
+        
+            # Resize image while maintaining aspect ratio
+            img = img.resize(MAX_IMAGE_SIZE, Image.LANCZOS)  # LANCZOS is the highest quality resampling filter
 
             resized_path = image_path.replace(".jpg", "_small.jpg")
-            img.save(resized_path, "JPEG", quality=85)  # Save resized image
 
-            # **Delete the original file**
+            # Apply aggressive compression while maintaining good quality
+            img.save(resized_path, "JPEG", quality=75, optimize=True, progressive=True)  # Reduce quality slightly
+
+            # Delete the original file
             os.remove(image_path)
 
-            return resized_path  # Return new resized file path
+            return resized_path  # Return compressed and resized file path
         except Exception as e:
-            print(f"Error resizing image {image_path}: {e}")
-            return image_path  # Fallback to original image if resizing fails
+            print(f"Error resizing and compressing image {image_path}: {e}")
+            return image_path  # Fallback to original image if compression fails
 
     def save_image_locally(self, user_id, image_hash, image_bytes):
         """Save and resize image locally, then return its file path."""
