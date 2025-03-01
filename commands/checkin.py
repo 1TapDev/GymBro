@@ -111,15 +111,26 @@ class CheckIn(commands.Cog):
                 await image_message.delete()
                 await upload_prompt.delete()  # Delete the bot's upload prompt
 
+                # Ensure the image file exists
+                if not os.path.exists(image_path):
+                    print(f"❌ Image file not found: {image_path}")
+                    await interaction.followup.send("⚠️ Image not found. Please try again.")
+                    return
+
+                # Attach image properly
+                file = discord.File(image_path, filename="checkin.jpg")
+    
                 # Embed confirmation message
                 embed = discord.Embed(
                     title="✅ Gym Check-In Completed!",
                     description=f"**{username}** checked in for **{category}**.\n**{response_text}**",
                     color=discord.Color.green()
                 )
-                embed.set_image(url=attachment.url)  # Display uploaded image
+                embed.set_image(url="attachment://checkin.jpg")  # Ensure image loads correctly
                 embed.set_footer(text="You earned 1 point!")
-                await interaction.followup.send(embed=embed)
+
+                # Send message with embed and image attached
+                await interaction.followup.send(embed=embed, file=file)
 
             elif result == "cooldown":
                 await interaction.followup.send(f"⏳ You have already checked in for **{category}** today. Try again tomorrow!")
