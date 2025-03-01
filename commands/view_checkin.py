@@ -55,7 +55,7 @@ class ViewCheckIn(commands.Cog):
             checkins_on_page = checkins[start_idx:end_idx]
 
             embed = discord.Embed(
-                title=f"📜 {target_user.display_name}'s {category.capitalize()} Check-Ins (Page {page+1}/{total_pages})",
+                title=f"📜 {target_user.display_name}'s {category.capitalize()} Check-Ins (Page {page + 1}/{total_pages})",
                 color=discord.Color.blue()
             )
 
@@ -70,7 +70,8 @@ class ViewCheckIn(commands.Cog):
                 elif category == "weight":
                     details += f"⚖️ **Weight:** {checkin['weight']} lbs\n"
                 elif category == "food":
-                    details += f"🍽️ **Meal:** {checkin['meal']}\n"
+                    # FIX: Use 'workout' instead of 'meal' because meals are stored in the 'workout' column
+                    details += f"🍽️ **Meal:** {checkin['workout']}\n"
 
                 embed.add_field(name="", value=details.strip(), inline=False)
 
