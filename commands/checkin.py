@@ -51,51 +51,38 @@ class CheckIn(commands.Cog):
 
         # Require a message input before image upload
         response_text = None
-        if category == "gym":
-            prompt_text = "🏋️ **Which workout did you do?** Please type it below."
-        elif category == "weight":
-            prompt_text = "⚖️ **Please enter your weight in pounds (e.g., 175.5):**"
-        elif category == "food":
-            prompt_text = "🍽️ **What meal did you have?** Please describe it."
+        prompt_text = {
+            "gym": "🏋️ **Which workout did you do?** Please type it below.",
+            "weight": "⚖️ **Please enter your weight in pounds (e.g., 175.5):**",
+            "food": "🍽️ **What meal did you have?** Please describe it."
+        }[category]
 
-        await interaction.followup.send(prompt_text)
+        prompt_message = await interaction.followup.send(prompt_text)
 
         def text_check(m):
-            return (
-                    m.author.id == user_id
-                    and isinstance(m.content, str)
-                    and not m.attachments  # Ensure no images are included
-            )
+            return m.author.id == user_id and not m.attachments
 
-        while True:
-            try:
-                message = await self.bot.wait_for("message", timeout=30.0)
-
-                if message.attachments:
-                    await interaction.followup.send(
-                        "❌ **Please type your response instead of uploading an image.** Try again.")
-                    continue
-
-                if text_check(message):
-                    response_text = message.content
-                    break
-
-            except asyncio.TimeoutError:
-                await interaction.followup.send("⏳ You took too long to enter a response. Please try again.")
-                return
+        try:
+            message = await self.bot.wait_for("message", timeout=30.0, check=text_check)
+            response_text = message.content
+            await message.delete()  # Delete the user's message after capturing response
+            await prompt_message.delete()  # Delete the bot's prompt message
+        except asyncio.TimeoutError:
+            await prompt_message.delete()
+            await interaction.followup.send("⏳ You took too long to enter a response. Please try again.")
+            return
 
         # If weight check-in, ensure the input is a valid number
+        weight = None
         if category == "weight":
             try:
                 weight = float(response_text)
             except ValueError:
                 await interaction.followup.send("❌ Invalid weight input. Please enter a numeric value (e.g., 175.5).")
                 return
-        else:
-            weight = None
 
         # Step 2: Require Image Upload AFTER Text Response
-        await interaction.followup.send(f"✅ **{category.capitalize()} check-in started!** Now, please upload a photo.")
+        upload_prompt = await interaction.followup.send(f"✅ **{category.capitalize()} check-in started!** Now, please upload a photo.")
 
         def image_check(m):
             return m.author.id == user_id and any(a.content_type.startswith("image/") for a in m.attachments)
@@ -106,44 +93,41 @@ class CheckIn(commands.Cog):
 
             image_bytes = await attachment.read()
             image_hash = self.hash_image(image_bytes)
-
-            # Save image locally and get its path
             image_path = self.save_image_locally(user_id, image_hash, image_bytes)
 
+            # Ensure no duplicate check-ins using the same image
             async with db.pool.acquire() as conn:
-                existing_checkin = await conn.fetchrow("""
-                    SELECT * FROM checkins WHERE user_id = $1 AND image_hash = $2
-                """, user_id, image_hash)
+                existing_checkin = await conn.fetchrow("SELECT * FROM checkins WHERE user_id = $1 AND image_hash = $2", user_id, image_hash)
 
             if existing_checkin:
-                await interaction.followup.send(
-                    "⚠️ You have already used this image for a check-in. Please upload a new one.")
+                await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
                 return
 
             # Log check-in with the image path
             result = await db.log_checkin(user_id, username, category, image_hash, image_path, response_text, weight)
 
             if result == "success":
+                # Delete user’s uploaded image message
+                await image_message.delete()
+                await upload_prompt.delete()  # Delete the bot's upload prompt
+
+                # Embed confirmation message
                 embed = discord.Embed(
-                    title=f"✅ {category.capitalize()} Check-In Completed!",
-                    description=f"**{username}** checked in for {category}.\n**{response_text}**",
-                    color=discord.Color.green(),
+                    title="✅ Gym Check-In Completed!",
+                    description=f"**{username}** checked in for **{category}**.\n**{response_text}**",
+                    color=discord.Color.green()
                 )
-                embed.set_image(url=attachment.url)  # Attach image
+                embed.set_image(url=attachment.url)  # Display uploaded image
                 embed.set_footer(text="You earned 1 point!")
-
-                # Delete previous messages to reduce spam
-                await interaction.channel.purge(limit=10, check=lambda m: m.author.id == self.bot.user.id)
-
                 await interaction.followup.send(embed=embed)
 
             elif result == "cooldown":
-                await interaction.followup.send(
-                    f"⏳ You have already checked in for **{category}** today. Try again tomorrow!")
+                await interaction.followup.send(f"⏳ You have already checked in for **{category}** today. Try again tomorrow!")
             else:
                 await interaction.followup.send("❌ There was an error logging your check-in. Please try again.")
 
         except asyncio.TimeoutError:
+            await upload_prompt.delete()
             await interaction.followup.send("⏳ You took too long to upload an image. Please try again.")
 
 async def setup(bot):
