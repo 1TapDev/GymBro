@@ -5,28 +5,50 @@ import asyncio
 import hashlib  # Used for detecting reused images
 import os  # Used for handling file paths
 from database import db
+from PIL import Image  # Pillow for image resizing
 
 # Folder to store images
 IMAGE_FOLDER = "checkin_images"
+MAX_IMAGE_SIZE = (300, 300)  # Resize images to 300x300 pixels
 
 class CheckIn(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.previous_images = {}  # Store image hashes per user to prevent abuse
+        self.previous_images = {}
 
     def hash_image(self, image_bytes):
-        return hashlib.md5(image_bytes).hexdigest()  # Generates a hash for the image
+        """Generate a hash for the image to prevent duplicates."""
+        return hashlib.md5(image_bytes).hexdigest()
+
+    def resize_image(self, image_path):
+        """Resize image before saving to limit its size and remove the original image."""
+        try:
+            img = Image.open(image_path)
+            img.thumbnail(MAX_IMAGE_SIZE)  # Resize while maintaining aspect ratio
+
+            resized_path = image_path.replace(".jpg", "_small.jpg")
+            img.save(resized_path, "JPEG", quality=85)  # Save resized image
+
+            # **Delete the original file**
+            os.remove(image_path)
+
+            return resized_path  # Return new resized file path
+        except Exception as e:
+            print(f"Error resizing image {image_path}: {e}")
+            return image_path  # Fallback to original image if resizing fails
 
     def save_image_locally(self, user_id, image_hash, image_bytes):
-        """Save image in a user-specific folder with a hashed filename and return the file path."""
-        user_folder = os.path.join(IMAGE_FOLDER, str(user_id))  # Folder for each user
-        os.makedirs(user_folder, exist_ok=True)  # Ensure the folder exists
+        """Save and resize image locally, then return its file path."""
+        user_folder = os.path.join(IMAGE_FOLDER, str(user_id))
+        os.makedirs(user_folder, exist_ok=True)
 
-        image_path = os.path.join(user_folder, f"{image_hash}.jpg")  # Save as JPG
-        with open(image_path, "wb") as f:
+        original_path = os.path.join(user_folder, f"{image_hash}.jpg")
+        with open(original_path, "wb") as f:
             f.write(image_bytes)
 
-        return image_path  # Return saved file path
+        # Resize the image before saving to the database
+        resized_path = self.resize_image(original_path)
+        return resized_path  # Return resized image path
 
     @app_commands.command(name="checkin", description="Log a check-in for gym, weight, or food.")
     @app_commands.choices(
@@ -37,19 +59,17 @@ class CheckIn(commands.Cog):
         ]
     )
     async def checkin(self, interaction: discord.Interaction, category: app_commands.Choice[str]):
-        category = category.value  # Get the selected category value
+        category = category.value
         user_id = interaction.user.id
         username = interaction.user.name
 
         await interaction.response.defer()
 
-        # Check cooldown
         cooldown_message = await db.check_cooldown(user_id, category)
         if cooldown_message:
             await interaction.followup.send(cooldown_message)
             return
 
-        # Require a message input before image upload
         response_text = None
         prompt_text = {
             "gym": "🏋️ **Which workout did you do?** Please type it below.",
@@ -65,14 +85,13 @@ class CheckIn(commands.Cog):
         try:
             message = await self.bot.wait_for("message", timeout=30.0, check=text_check)
             response_text = message.content
-            await message.delete()  # Delete the user's message after capturing response
-            await prompt_message.delete()  # Delete the bot's prompt message
+            await message.delete()
+            await prompt_message.delete()
         except asyncio.TimeoutError:
             await prompt_message.delete()
             await interaction.followup.send("⏳ You took too long to enter a response. Please try again.")
             return
 
-        # If weight check-in, ensure the input is a valid number
         weight = None
         if category == "weight":
             try:
@@ -81,7 +100,6 @@ class CheckIn(commands.Cog):
                 await interaction.followup.send("❌ Invalid weight input. Please enter a numeric value (e.g., 175.5).")
                 return
 
-        # Step 2: Require Image Upload AFTER Text Response
         upload_prompt = await interaction.followup.send(f"✅ **{category.capitalize()} check-in started!** Now, please upload a photo.")
 
         def image_check(m):
@@ -95,7 +113,6 @@ class CheckIn(commands.Cog):
             image_hash = self.hash_image(image_bytes)
             image_path = self.save_image_locally(user_id, image_hash, image_bytes)
 
-            # Ensure no duplicate check-ins using the same image
             async with db.pool.acquire() as conn:
                 existing_checkin = await conn.fetchrow("SELECT * FROM checkins WHERE user_id = $1 AND image_hash = $2", user_id, image_hash)
 
@@ -103,33 +120,26 @@ class CheckIn(commands.Cog):
                 await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
                 return
 
-            # Log check-in with the image path
             result = await db.log_checkin(user_id, username, category, image_hash, image_path, response_text, weight)
 
             if result == "success":
-                # Delete user’s uploaded image message
                 await image_message.delete()
-                await upload_prompt.delete()  # Delete the bot's upload prompt
+                await upload_prompt.delete()
 
-                # Ensure the image file exists
                 if not os.path.exists(image_path):
                     print(f"❌ Image file not found: {image_path}")
                     await interaction.followup.send("⚠️ Image not found. Please try again.")
                     return
 
-                # Attach image properly
                 file = discord.File(image_path, filename="checkin.jpg")
-    
-                # Embed confirmation message
                 embed = discord.Embed(
                     title="✅ Gym Check-In Completed!",
                     description=f"**{username}** checked in for **{category}**.\n**{response_text}**",
                     color=discord.Color.green()
                 )
-                embed.set_image(url="attachment://checkin.jpg")  # Ensure image loads correctly
+                embed.set_image(url="attachment://checkin.jpg")
                 embed.set_footer(text="You earned 1 point!")
 
-                # Send message with embed and image attached
                 await interaction.followup.send(embed=embed, file=file)
 
             elif result == "cooldown":
