@@ -111,22 +111,22 @@ class Challenge(commands.Cog):
         goal_weight = float(msg.content)
 
         # Ask for personal goal
-        await dm_channel.send("✍️ What is your personal goal? (e.g., 'Lose 10 lbs', 'Bulk up')")
+        await dm_channel.send("✍️ What is your personal goal? (e.g., 'Lose 10 lbs', 'Bulk up', 'Main Gain')")
         msg = await self.bot.wait_for("message", check=lambda m: m.author == user and m.channel == dm_channel)
         personal_goal = msg.content
 
-        # Create user-specific folder for photos
+        # Generate a unique folder using UUID
         user_uuid = str(uuid.uuid4())
-        user_folder = os.path.join("challenge", user_uuid)
+        user_folder = os.path.join("challenge", user_uuid)  # Save inside challenge/uuid/
         os.makedirs(user_folder, exist_ok=True)
 
         # Show example photos and ask for initial photos
-        await dm_channel.send("📸 Please upload at least 3 photos: Front Double Biceps, Rear Double Biceps, Side Chest.")
-        example_photos = ["assets/example.png", "assets/example1.png", "assets/example2.png"]
+        await dm_channel.send("📸 Please upload 4 photos following the example poses: Relaxed Front Pose, Front Double Biceps, Rear Double Biceps, and Relaxed Back Pose.")
+        example_photos = ["assets/example.png", "assets/example1.png", "assets/example2.png", "assets/example3.png"]
         await dm_channel.send(files=[discord.File(photo) for photo in example_photos])
 
         photos = []
-        while len(photos) < 3:
+        while len(photos) < 4:
             msg = await self.bot.wait_for("message", check=lambda
                 m: m.author == user and m.channel == dm_channel and m.attachments)
             for attachment in msg.attachments:
