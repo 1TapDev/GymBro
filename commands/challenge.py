@@ -4,6 +4,8 @@ from discord.ext import commands
 import asyncio
 from database import db
 from datetime import datetime, timedelta
+import os
+import uuid
 
 
 class Challenge(commands.Cog):
@@ -93,7 +95,7 @@ class Challenge(commands.Cog):
         self.active_challenge = None  # Reset challenge
 
     async def register_user(self, user):
-        """Registers a user in the challenge_participants table and asks for weight/goal."""
+        """Registers a user in the challenge_participants table and asks for weight/goal/photos."""
         print(f"[DEBUG] Sending registration DM to {user.name}")
         dm_channel = await user.create_dm()
         await dm_channel.send("🏆 Welcome to the challenge! Let's get started.")
@@ -108,14 +110,52 @@ class Challenge(commands.Cog):
         msg = await self.bot.wait_for("message", check=lambda m: m.author == user and m.channel == dm_channel)
         goal_weight = float(msg.content)
 
+        # Ask for personal goal
+        await dm_channel.send("✍️ What is your personal goal? (e.g., 'Lose 10 lbs', 'Bulk up')")
+        msg = await self.bot.wait_for("message", check=lambda m: m.author == user and m.channel == dm_channel)
+        personal_goal = msg.content
+
+        # Create user-specific folder for photos
+        user_uuid = str(uuid.uuid4())
+        user_folder = os.path.join("challenge", user_uuid)
+        os.makedirs(user_folder, exist_ok=True)
+
+        # Show example photos and ask for initial photos
+        await dm_channel.send("📸 Please upload at least 3 photos: Front Double Biceps, Rear Double Biceps, Side Chest.")
+        example_photos = ["assets/example.png", "assets/example1.png", "assets/example2.png"]
+        await dm_channel.send(files=[discord.File(photo) for photo in example_photos])
+
+        photos = []
+        while len(photos) < 3:
+            msg = await self.bot.wait_for("message", check=lambda
+                m: m.author == user and m.channel == dm_channel and m.attachments)
+            for attachment in msg.attachments:
+                photo_path = os.path.join(user_folder, attachment.filename)
+                await attachment.save(photo_path)
+                photos.append(photo_path)
+
+        await dm_channel.send(
+            "✅ Photos received! Would you like to upload any additional poses? Send them now or type 'done'.")
+
+        while True:
+            msg = await self.bot.wait_for("message", check=lambda m: m.author == user and m.channel == dm_channel)
+            if msg.content.lower() == "done":
+                break
+            if msg.attachments:
+                for attachment in msg.attachments:
+                    photo_path = os.path.join(user_folder, attachment.filename)
+                    await attachment.save(photo_path)
+                    photos.append(photo_path)
+
         # Store user details in database
         try:
             async with db.pool.acquire() as conn:
                 print(f"[DEBUG] Registering {user.name} in challenge_participants.")
                 await conn.execute("""
-                    INSERT INTO challenge_participants (challenge_id, user_id, username, current_weight, goal_weight)
-                    VALUES ($1, $2, $3, $4, $5)
-                """, self.active_challenge["id"], user.id, user.name, current_weight, goal_weight)
+                    INSERT INTO challenge_participants (challenge_id, user_id, username, current_weight, goal_weight, personal_goal, initial_photos)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """, self.active_challenge["id"], user.id, user.name, current_weight, goal_weight, personal_goal,
+                                   photos)
                 print("[DEBUG] Successfully registered participant.")
                 await dm_channel.send("✅ You have been successfully registered in the challenge!")
         except Exception as e:
