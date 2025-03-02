@@ -54,3 +54,8 @@ CREATE TABLE challenge_votes (
     participant_id BIGINT NOT NULL,
     UNIQUE (challenge_id, voter_id) -- Ensures one vote per challenge per user
 );
+
+--Convert timestamp to date in challenges
+ALTER TABLE challenges
+ALTER COLUMN start_date TYPE DATE USING start_date::DATE,
+ALTER COLUMN end_date TYPE DATE USING end_date::DATE;
