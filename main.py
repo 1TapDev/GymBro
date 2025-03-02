@@ -11,7 +11,10 @@ load_dotenv()
 class Client(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        intents.message_content = True  # Allow bot to read message content
+        intents.message_content = True  # Allow bot to read messages
+        intents.reactions = True  # ✅ REQUIRED for detecting reactions
+        intents.guilds = True
+        intents.members = True  # REQUIRED if checking users in guild
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
@@ -24,6 +27,16 @@ class Client(commands.Bot):
     async def on_ready(self):
         print(f'✅ Logged on as {self.user}!')
         await self.tree.sync()
+
+        # **Check for active challenges and resume reaction listening**
+        async with db.pool.acquire() as conn:
+            active_challenges = await conn.fetch("""
+                SELECT id FROM challenges WHERE status = 'active'
+            """)
+
+        for challenge in active_challenges:
+            print("[DEBUG] Resuming reaction listener for active challenge:", challenge["id"])
+            await self.get_cog("Challenge").wait_for_reactions(challenge["id"])
 
         # **Start APScheduler**
         start_scheduler(self)

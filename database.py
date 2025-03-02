@@ -149,7 +149,6 @@ class Database:
                 print(f"❌ Error logging check-in for user {user_id}: {e}")
                 return "error"
 
-
     async def get_user_points(self, user_id):
         """Calculate total points based on check-ins (excluding duplicates)."""
         async with self.pool.acquire() as conn:
