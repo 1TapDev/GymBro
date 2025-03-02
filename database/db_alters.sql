@@ -59,3 +59,7 @@ CREATE TABLE challenge_votes (
 ALTER TABLE challenges
 ALTER COLUMN start_date TYPE DATE USING start_date::DATE,
 ALTER COLUMN end_date TYPE DATE USING end_date::DATE;
+
+--Grant all privileges
+GRANT ALL PRIVILEGES ON TABLE challenges TO your_db_user;
+GRANT ALL PRIVILEGES ON SEQUENCE challenges_id_seq TO your_db_user;
