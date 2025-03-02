@@ -21,9 +21,9 @@ CREATE TABLE challenges (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     goal TEXT NOT NULL,
-    start_date TIMESTAMP DEFAULT NOW(),
-    end_date TIMESTAMP NOT NULL,
-    status TEXT DEFAULT 'active'  
+    start_date date DEFAULT NOW(),
+    end_date date NOT NULL,
+    status TEXT DEFAULT 'active'
 );
 
 CREATE TABLE challenge_participants (
