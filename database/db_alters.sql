@@ -19,18 +19,11 @@ CREATE INDEX checkins_timestamp_desc_idx ON checkins (timestamp DESC);
 --Challenges tables
 CREATE TABLE challenges (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    username TEXT NOT NULL,
+    name TEXT NOT NULL,
+    goal TEXT NOT NULL,
     start_date TIMESTAMP DEFAULT NOW(),
     end_date TIMESTAMP NOT NULL,
-    initial_photos TEXT[],  -- Stores URLs to initial photos
-    current_weight DECIMAL(5,2),
-    goal_weight DECIMAL(5,2),
-    personal_goal TEXT,
-    progress_photos TEXT[],  -- Stores progress update photos
-    final_photos TEXT[],  -- Stores final photos for voting
-    votes INT DEFAULT 0,  -- Stores number of votes received
-    status TEXT DEFAULT 'active'  -- Status: active, completed, or cancelled
+    status TEXT DEFAULT 'active'  
 );
 
 CREATE TABLE challenge_participants (
@@ -59,3 +52,6 @@ CREATE TABLE challenge_votes (
 ALTER TABLE challenges
 ALTER COLUMN start_date TYPE DATE USING start_date::DATE,
 ALTER COLUMN end_date TYPE DATE USING end_date::DATE;
+
+GRANT ALL PRIVILEGES ON TABLE challenges TO your_db_user;
+GRANT ALL PRIVILEGES ON SEQUENCE challenges_id_seq TO your_db_user;
