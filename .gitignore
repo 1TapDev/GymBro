@@ -3,3 +3,4 @@
 .venv/
 checkin_images/*
 challenge/*
+generate_requirements.py
