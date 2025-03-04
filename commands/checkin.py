@@ -5,11 +5,11 @@ import asyncio
 import hashlib  # Used for detecting reused images
 import os  # Used for handling file paths
 from database import db
-from PIL import Image  # Pillow for image resizing
+from PIL import Image  # Pillow for image compression
 
 # Folder to store images
 IMAGE_FOLDER = "checkin_images"
-MAX_IMAGE_SIZE = (300, 300)  # Resize images to 300x300 pixels
+MAX_IMAGE_SIZE = (600, 600)  # Optimal resizing while preserving quality
 
 class CheckIn(commands.Cog):
     def __init__(self, bot):
@@ -20,39 +20,29 @@ class CheckIn(commands.Cog):
         """Generate a hash for the image to prevent duplicates."""
         return hashlib.md5(image_bytes).hexdigest()
 
-    def resize_image(self, image_path):
-        """Resize image to MAX_IMAGE_SIZE and apply aggressive compression without significant quality loss."""
-        try:
-            img = Image.open(image_path)
-        
-            # Resize image while maintaining aspect ratio
-            img = img.resize(MAX_IMAGE_SIZE, Image.LANCZOS)  # LANCZOS is the highest quality resampling filter
-
-            resized_path = image_path.replace(".jpg", "_small.jpg")
-
-            # Apply aggressive compression while maintaining good quality
-            img.save(resized_path, "JPEG", quality=75, optimize=True, progressive=True)  # Reduce quality slightly
-
-            # Delete the original file
-            os.remove(image_path)
-
-            return resized_path  # Return compressed and resized file path
-        except Exception as e:
-            print(f"Error resizing and compressing image {image_path}: {e}")
-            return image_path  # Fallback to original image if compression fails
-
     def save_image_locally(self, user_id, image_hash, image_bytes):
-        """Save and resize image locally, then return its file path."""
+        """Save image in WebP format locally, with compression & resizing."""
         user_folder = os.path.join(IMAGE_FOLDER, str(user_id))
         os.makedirs(user_folder, exist_ok=True)
 
-        original_path = os.path.join(user_folder, f"{image_hash}.jpg")
+        original_path = os.path.join(user_folder, f"{image_hash}.webp")
         with open(original_path, "wb") as f:
             f.write(image_bytes)
 
-        # Resize the image before saving to the database
-        resized_path = self.resize_image(original_path)
-        return resized_path  # Return resized image path
+        try:
+            # Open the image & convert to WebP with compression
+            img = Image.open(original_path)
+
+            # Resize image while maintaining aspect ratio
+            img.thumbnail(MAX_IMAGE_SIZE, Image.LANCZOS)
+
+            # Save as WebP with lossy compression (quality=85)
+            img.save(original_path, "WEBP", quality=85, optimize=True)
+
+        except Exception as e:
+            print(f"Error compressing image {original_path}: {e}")
+
+        return original_path  # Return WebP compressed file path
 
     @app_commands.command(name="checkin", description="Log a check-in for gym, weight, or food.")
     @app_commands.choices(
@@ -135,13 +125,13 @@ class CheckIn(commands.Cog):
                     await interaction.followup.send("⚠️ Image not found. Please try again.")
                     return
 
-                file = discord.File(image_path, filename="checkin.jpg")
+                file = discord.File(image_path, filename="checkin.webp")
                 embed = discord.Embed(
                     title="✅ Gym Check-In Completed!",
                     description=f"**{username}** checked in for **{category}**.\n**{response_text}**",
                     color=discord.Color.green()
                 )
-                embed.set_image(url="attachment://checkin.jpg")
+                embed.set_image(url="attachment://checkin.webp")
                 embed.set_footer(text="You earned 1 point!")
 
                 await interaction.followup.send(embed=embed, file=file)

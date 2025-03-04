@@ -27,7 +27,7 @@ class PRConfirmationView(View):
     async def confirm(self, interaction: discord.Interaction, button: Button):
         try:
             print(f"[DEBUG] Updating PR: User {self.user_id}, Lift {self.lift}, New PR {self.new_value}")
-            await db.update_pr(self.user_id, self.lift, self.new_value)  # ✅ Now correctly calls class method
+            await db.update_pr(self.user_id, self.lift, self.new_value)  # ✅ Update only the specified lift
 
             embed = discord.Embed(
                 title="✅ PR Updated!",
@@ -37,6 +37,7 @@ class PRConfirmationView(View):
             embed.set_footer(text="Now upload a video of your PR attempt (Max 30s).")
             await interaction.response.edit_message(embed=embed, view=None)
 
+            # Trigger video upload prompt
             await self.prompt_video_upload(interaction)
 
         except Exception as e:
@@ -53,7 +54,7 @@ class PRConfirmationView(View):
         await interaction.response.edit_message(embed=embed, view=None)
 
     async def prompt_video_upload(self, interaction: discord.Interaction):
-        await interaction.followup.send("✅ Please upload a **video (max 60s)** of your PR attempt.")
+        await interaction.followup.send("✅ Please upload a **video (max 30s)** of your PR attempt.")
 
         def check(m):
             return m.author.id == self.user_id and m.attachments and m.attachments[0].content_type.startswith("video/")
@@ -62,15 +63,24 @@ class PRConfirmationView(View):
             message = await interaction.client.wait_for("message", timeout=240.0, check=check)
             attachment = message.attachments[0]
 
-            user_uuid = str(uuid.uuid4())
             user_folder = os.path.join(PR_VIDEO_FOLDER, str(self.user_id))
             os.makedirs(user_folder, exist_ok=True)
 
-            video_path = os.path.join(user_folder, f"{user_uuid}.mp4")
+            video_path = os.path.join(user_folder, f"{uuid.uuid4()}.mp4")
             await attachment.save(video_path)
 
             await db.save_pr_video(self.user_id, self.lift, video_path)
-            await interaction.followup.send("✅ PR video saved successfully!")
+
+            # Delete messages for clean UI
+            await message.delete()
+            await interaction.channel.purge(limit=2, check=lambda m: m.author == interaction.client.user)
+
+            embed = discord.Embed(
+                title="✅ PR Video Saved Successfully!",
+                description=f"Your **{self.lift.capitalize()} PR video** has been recorded.",
+                color=discord.Color.green()
+            )
+            await interaction.followup.send(embed=embed)
 
         except Exception as e:
             await interaction.followup.send("❌ Failed to upload PR video. Please try again.")
@@ -109,9 +119,7 @@ class PersonalRecords(commands.Cog):
         )
 
         # Send message with confirmation buttons
-        await interaction.response.send_message(embed=embed,
-                                                view=PRConfirmationView(user_id, lift, value, current_pr, interaction))
-
+        await interaction.response.send_message(embed=embed, view=PRConfirmationView(user_id, lift, value, current_pr, interaction))
 
 async def setup(bot):
     await bot.add_cog(PersonalRecords(bot))

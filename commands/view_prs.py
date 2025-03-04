@@ -45,7 +45,7 @@ class ViewPRs(commands.Cog):
                 video_path = pr_videos[video_column]
                 if os.path.exists(video_path):  # Ensure file exists before sending
                     file = discord.File(video_path, filename=f"{lift_name}.mp4")
-                    await interaction.followup.send(f"📷 {lift.name} PR Attempt:", file=file)
+                    await interaction.followup.send(f"✅ {lift.name} PR Attempt:", file=file)
                 else:
                     await interaction.followup.send(f"⚠️ No recorded video found for {lift.name} PR.")
             return
