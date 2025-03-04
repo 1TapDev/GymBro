@@ -2,8 +2,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ui import View, Button
+import os
+import uuid
 from database import db
 
+PR_VIDEO_FOLDER = "pr_videos"
 
 class PRConfirmationView(View):
     def __init__(self, user_id, lift, new_value, current_value, interaction):
@@ -15,21 +18,30 @@ class PRConfirmationView(View):
         self.interaction = interaction
 
     async def interaction_check(self, interaction: discord.Interaction):
-        return interaction.user.id == self.user_id  # Ensure only the command user can interact
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ You can't confirm someone else's PR!", ephemeral=True)
+            return False
+        return True
 
     @discord.ui.button(label="✅ Yes", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: Button):
-        await db.update_pr(self.user_id, self.lift, self.new_value)
+        try:
+            print(f"[DEBUG] Updating PR: User {self.user_id}, Lift {self.lift}, New PR {self.new_value}")
+            await db.update_pr(self.user_id, self.lift, self.new_value)  # ✅ Now correctly calls class method
 
-        # Updated confirmation message
-        embed = discord.Embed(
-            title="✅ PR Updated!",
-            description=f"Your **{self.lift.capitalize()} PR** has been set to **{self.new_value} lbs**!",
-            color=discord.Color.green()
-        )
-        embed.set_footer(text="Keep pushing for new PRs! 💪")
+            embed = discord.Embed(
+                title="✅ PR Updated!",
+                description=f"Your **{self.lift.capitalize()} PR** has been set to **{self.new_value} lbs**!",
+                color=discord.Color.green()
+            )
+            embed.set_footer(text="Now upload a video of your PR attempt (Max 30s).")
+            await interaction.response.edit_message(embed=embed, view=None)
 
-        await interaction.response.edit_message(embed=embed, view=None)
+            await self.prompt_video_upload(interaction)
+
+        except Exception as e:
+            print(f"[ERROR] Failed to update PR: {e}")
+            await interaction.response.send_message("❌ Error updating PR. Please try again.", ephemeral=True)
 
     @discord.ui.button(label="❌ No", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: Button):
@@ -40,6 +52,29 @@ class PRConfirmationView(View):
         )
         await interaction.response.edit_message(embed=embed, view=None)
 
+    async def prompt_video_upload(self, interaction: discord.Interaction):
+        await interaction.followup.send("✅ Please upload a **video (max 60s)** of your PR attempt.")
+
+        def check(m):
+            return m.author.id == self.user_id and m.attachments and m.attachments[0].content_type.startswith("video/")
+
+        try:
+            message = await interaction.client.wait_for("message", timeout=240.0, check=check)
+            attachment = message.attachments[0]
+
+            user_uuid = str(uuid.uuid4())
+            user_folder = os.path.join(PR_VIDEO_FOLDER, str(self.user_id))
+            os.makedirs(user_folder, exist_ok=True)
+
+            video_path = os.path.join(user_folder, f"{user_uuid}.mp4")
+            await attachment.save(video_path)
+
+            await db.save_pr_video(self.user_id, self.lift, video_path)
+            await interaction.followup.send("✅ PR video saved successfully!")
+
+        except Exception as e:
+            await interaction.followup.send("❌ Failed to upload PR video. Please try again.")
+            print(f"[ERROR] PR video upload failed: {e}")
 
 class PersonalRecords(commands.Cog):
     def __init__(self, bot):

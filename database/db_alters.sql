@@ -55,3 +55,9 @@ ALTER COLUMN end_date TYPE DATE USING end_date::DATE;
 
 GRANT ALL PRIVILEGES ON TABLE challenges TO your_db_user;
 GRANT ALL PRIVILEGES ON SEQUENCE challenges_id_seq TO your_db_user;
+
+--Add Video Paths to personal_records
+ALTER TABLE personal_records
+ADD COLUMN deadlift_video TEXT DEFAULT NULL,
+ADD COLUMN bench_video TEXT DEFAULT NULL,
+ADD COLUMN squat_video TEXT DEFAULT NULL;
