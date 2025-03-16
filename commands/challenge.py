@@ -84,6 +84,42 @@ class Challenge(commands.Cog):
             print(f"[ERROR] Failed to send challenge message: {e}")
             await interaction.followup.send("❌ Error sending challenge message.", ephemeral=True)
 
+    @app_commands.command(name="challenge_participants", description="Show all participants in the current challenge.")
+    async def challenge_participants(self, interaction: discord.Interaction):
+        """Fetches and displays all participants in the active challenge with their actual Discord names."""
+        async with db.pool.acquire() as conn:
+            # Fetch active challenge
+            active_challenge = await conn.fetchrow("SELECT id, name FROM challenges WHERE status = 'active' ORDER BY start_date DESC LIMIT 1")
+            if not active_challenge:
+                await interaction.response.send_message("⚠️ No active challenge found!", ephemeral=True)
+                return
+
+            challenge_id = active_challenge["id"]
+            challenge_name = active_challenge["name"]
+
+            # Fetch participants
+            participants = await conn.fetch("SELECT user_id FROM challenge_participants WHERE challenge_id = $1", challenge_id)
+            if not participants:
+                await interaction.response.send_message(f"⚠️ No participants found for **{challenge_name}**.", ephemeral=True)
+                return
+
+            participant_list = []
+            for p in participants:
+                user = interaction.guild.get_member(p["user_id"])  # Get Discord user object
+                display_name = user.display_name if user else "Unknown"
+                participant_list.append(f"✅ {display_name}")
+
+            participant_text = "\n".join(participant_list)
+
+            embed = discord.Embed(
+                title=f"🏆 Participants in {challenge_name}",
+                description=participant_text,
+                color=discord.Color.green()
+            )
+
+            await interaction.response.send_message(embed=embed)
+
+
     @app_commands.command(name="join_challenge", description="Join the active fitness challenge!")
     async def join_challenge(self, interaction: discord.Interaction):
         """Allows a user to join an active challenge."""
