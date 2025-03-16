@@ -201,32 +201,30 @@ class Database:
                 return []
 
     async def update_pr(self, user_id, lift, value):
-        """Insert or update only the specified PR lift (not affecting video paths)."""
+        """Update the user's personal record (PR) for deadlift, bench, or squat."""
         async with self.pool.acquire() as conn:
-            await conn.execute(f"""
-                INSERT INTO personal_records (user_id, {lift}) 
-                VALUES ($1, $2) 
-                ON CONFLICT (user_id) 
-                DO UPDATE SET {lift} = EXCLUDED.{lift};
-            """, user_id, value)
+            if lift in ["deadlift", "bench", "squat"]:
+                await conn.execute(f"""
+                    INSERT INTO personal_records (user_id, {lift}) 
+                    VALUES ($1, $2) 
+                    ON CONFLICT (user_id) 
+                    DO UPDATE SET {lift} = EXCLUDED.{lift};
+                """, user_id, value)
 
     async def save_pr_video(self, user_id, lift, video_path):
-        """Save PR video path in the database."""
+        """Store PR video paths in the database."""
         async with self.pool.acquire() as conn:
             await conn.execute(f"""
-                UPDATE personal_records 
-                SET {lift}_video = $1 
-                WHERE user_id = $2;
+                UPDATE personal_records SET {lift}_video = $1 WHERE user_id = $2;
             """, video_path, user_id)
 
     async def get_pr_videos(self, user_id):
-        """Retrieve PR video paths for a user."""
+        """Retrieve video paths for the user's PRs."""
         async with self.pool.acquire() as conn:
-            return await conn.fetchrow("""
-                SELECT deadlift_video, bench_video, squat_video 
-                FROM personal_records 
-                WHERE user_id = $1
+            result = await conn.fetchrow("""
+                SELECT deadlift_video, bench_video, squat_video FROM personal_records WHERE user_id = $1
             """, user_id)
+        return result if result else {}
 
     async def get_personal_records(self, user_id):
         """Retrieve a user's personal records (PRs)."""

@@ -61,3 +61,10 @@ ALTER TABLE personal_records
 ADD COLUMN deadlift_video TEXT DEFAULT NULL,
 ADD COLUMN bench_video TEXT DEFAULT NULL,
 ADD COLUMN squat_video TEXT DEFAULT NULL;
+
+--Create Prize suggestion table
+CREATE TABLE IF NOT EXISTS prize_suggestions (
+    user_id BIGINT PRIMARY KEY,
+    username TEXT,
+    prize TEXT
+);

@@ -84,6 +84,45 @@ class Challenge(commands.Cog):
             print(f"[ERROR] Failed to send challenge message: {e}")
             await interaction.followup.send("❌ Error sending challenge message.", ephemeral=True)
 
+    @app_commands.command(name="join_challenge", description="Join the active fitness challenge!")
+    async def join_challenge(self, interaction: discord.Interaction):
+        """Allows a user to join an active challenge."""
+        user_id = interaction.user.id
+        username = interaction.user.display_name
+
+        async with db.pool.acquire() as conn:
+            # ✅ Check for an active challenge
+            active_challenge = await conn.fetchrow("SELECT id FROM challenges WHERE status = 'active'")
+            if not active_challenge:
+                await interaction.response.send_message("⚠️ No active challenge found! Please check again later.", ephemeral=True)
+                return
+
+            challenge_id = active_challenge["id"]
+
+            # ✅ Check if user is already in the challenge
+            existing_entry = await conn.fetchrow(
+                "SELECT * FROM challenge_participants WHERE challenge_id = $1 AND user_id = $2", challenge_id, user_id
+            )
+            if existing_entry:
+                await interaction.response.send_message("✅ You are already in the challenge!", ephemeral=True)
+                return
+
+            # ✅ Add user to challenge_participants table
+            await conn.execute(
+                """
+                INSERT INTO challenge_participants (challenge_id, user_id, username)
+                VALUES ($1, $2, $3)
+                """,
+                challenge_id, user_id, username
+            )
+
+        await interaction.response.send_message(
+            f"🎉 {interaction.user.mention}, you have successfully joined the challenge! Check your DMs to complete registration.",
+            ephemeral=False)
+
+        # ✅ Start the DM registration process
+        await self.register_user(interaction.user, challenge_id)
+
     async def wait_for_reactions(self, challenge_id):
         """Continues waiting for reactions on restart."""
         print(f"[DEBUG] Resuming reaction listener for active challenge: {challenge_id}")
@@ -287,5 +326,4 @@ class Challenge(commands.Cog):
             print(f"[ERROR] Unexpected error in register_user: {e}")
 
 async def setup(bot):
-    """Registers the Challenge cog when the bot starts."""
     await bot.add_cog(Challenge(bot))

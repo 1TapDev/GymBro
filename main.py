@@ -1,7 +1,7 @@
-import discord # Import the Discord API library
+import discord  # Import the Discord API library
 import os
 import asyncio
-from discord.ext import commands
+from discord.ext import commands, tasks  # Add tasks for background looping
 from dotenv import load_dotenv
 from database import db
 from scheduler import start_scheduler  # Import the scheduler
@@ -16,6 +16,7 @@ class Client(commands.Bot):
         intents.guilds = True
         intents.members = True  # REQUIRED if checking users in guild
         super().__init__(command_prefix="!", intents=intents)
+        self.presence_task_running = False  # Prevent multiple loop starts
 
     async def setup_hook(self):
         print("🚀 Starting bot...")
@@ -28,32 +29,39 @@ class Client(commands.Bot):
         print(f'✅ Logged on as {self.user}!')
         await self.tree.sync()
 
-        # **Check for active challenges and resume reaction listening**
-        async with db.pool.acquire() as conn:
-            active_challenges = await conn.fetch("""
-                SELECT id FROM challenges WHERE status = 'active'
-            """)
-
-        for challenge in active_challenges:
-            print("[DEBUG] Resuming reaction listener for active challenge:", challenge["id"])
-            await self.get_cog("Challenge").wait_for_reactions(challenge["id"])
-
         # **Start APScheduler**
         start_scheduler(self)
         print("⏰ APScheduler started: Weigh-In Reminder is active!")
 
-        # ✅ **Set the bot's rich presence activity**
-        activity = discord.Activity(
-            type=discord.ActivityType.watching, 
+        # ✅ Set initial presence
+        await self.change_presence(activity=discord.Activity(
+            type=discord.ActivityType.watching,
             name="Gym Check-ins 🏋️‍♂️"
-        )
-        await self.change_presence(activity=activity)
-
+        ))
         print("🎮 Rich Presence set: Watching Gym Check-ins 🏋️‍♂️")
 
+        # ✅ Start rich presence loop only once
+        if not self.presence_task_running:
+            print("🔄 [Presence] Starting presence task loop...")
+            self.presence_task.start()
+            self.presence_task_running = True
+        else:
+            print("⚠️ [Presence] Presence task is already running.")
+
+    @tasks.loop(minutes=5)  # ✅ Reapply presence every 5 minutes
+    async def presence_task(self):
+        if self.is_ready():
+            print("🔄 [Presence] Updating bot activity...")
+            activity = discord.Activity(
+                type=discord.ActivityType.watching,
+                name="Gym Check-ins 🏋️‍♂️"
+            )
+            await self.change_presence(activity=activity)
+            print("✅ [Presence] Activity updated successfully.")
 
     async def close(self):
         print("🔴 Shutting down bot...")
+        self.presence_task.cancel()  # ✅ Stop presence task before shutdown
         await db.close()
         await super().close()
 
