@@ -3,6 +3,7 @@ import asyncio
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import db
+from datetime import datetime
 
 scheduler = AsyncIOScheduler()
 EST = pytz.timezone("America/New_York")
@@ -12,8 +13,8 @@ async def check_users_in_challenge(bot):
     """Checks if users are in the active challenge and notifies those who haven't joined yet."""
     print("🔍 [Scheduler] Checking challenge participation...")
 
-    guild_id = 1343077263704592436  # Discord server ID
-    channel_id = 1343077263704592439  # Channel for challenge notifications
+    guild_id = 1119801250230321273  # Discord server ID
+    channel_id = 1235378047390187601  # Channel for challenge notifications
 
     guild = bot.get_guild(guild_id)
     if not guild:
@@ -87,18 +88,22 @@ async def send_weigh_in_reminder(bot):
     async with db.pool.acquire() as conn:
         try:
             rows = await conn.fetch("""
-                WITH weight_data AS (
-                    SELECT user_id, 
-                        MIN(weight) AS first_weight,
-                        MAX(weight) AS recent_weight
+                WITH first_weight_cte AS (
+                    SELECT DISTINCT ON (user_id) user_id, weight AS first_weight
                     FROM checkins
-                    WHERE category = 'weight' 
-                    AND timestamp >= NOW() - INTERVAL '7 days'
-                    GROUP BY user_id
+                    WHERE category = 'weight'
+                    ORDER BY user_id, timestamp ASC
+                ),
+                recent_weight_cte AS (
+                    SELECT DISTINCT ON (user_id) user_id, weight AS recent_weight
+                    FROM checkins
+                    WHERE category = 'weight'
+                    ORDER BY user_id, timestamp DESC
                 )
-                SELECT user_id, first_weight, recent_weight, (recent_weight - first_weight) AS weight_change
-                FROM weight_data
-                ORDER BY ABS(recent_weight - first_weight) DESC
+                SELECT fw.user_id, fw.first_weight, rw.recent_weight, (rw.recent_weight - fw.first_weight) AS weight_change
+                FROM first_weight_cte fw
+                JOIN recent_weight_cte rw ON fw.user_id = rw.user_id
+                ORDER BY ABS(rw.recent_weight - fw.first_weight) DESC
                 LIMIT 3;
             """)
 
@@ -136,20 +141,14 @@ async def send_weigh_in_reminder(bot):
 def start_scheduler(bot):
     """ Starts the APScheduler to send reminders and check challenge participation. """
     print("⏳ [Scheduler] Initializing APScheduler...")
-    est = pytz.timezone("America/New_York")
 
     # ✅ Check every 12 hours if users are in the challenge
-    scheduler.add_job(check_users_in_challenge, "interval", hours=12, timezone=est, args=[bot])
+    scheduler.add_job(check_users_in_challenge, "interval", hours=12, timezone="America/New_York", args=[bot])
 
-    # ✅ Weigh-in reminder every Saturday at 12 PM EST
-    scheduler.add_job(send_weigh_in_reminder, "cron", day_of_week="sat", hour=9, minute=30, timezone=est, args=[bot])
+    # ✅ Weigh-in reminder every Saturday at 10:10 AM EST
+    scheduler.add_job(send_weigh_in_reminder, "cron", day_of_week="sat", hour=12, minute=00, timezone="America/New_York", args=[bot])
 
-    scheduler.start()
-    print("✅ [Scheduler] APScheduler Started: Checking challenge participation every 12 hours + Weigh-In reminder on Saturdays.")
-
-    async def run_initial_check():
-        await asyncio.sleep(5)  # Give the bot time to fully initialize
-        print("🚀 [Scheduler] Running initial challenge participation check...")
-        await check_users_in_challenge(bot)
-
-    bot.loop.create_task(run_initial_check())
+    # ✅ Ensure the scheduler is running
+    if scheduler.state != 1:
+        scheduler.start()
+        print("✅ [Scheduler] APScheduler has started!")
