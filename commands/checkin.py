@@ -1,15 +1,14 @@
-import discord  # Import the Discord API library
+import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
-import hashlib  # Used for detecting reused images
-import os  # Used for handling file paths
+import hashlib
+import os
 from database import db
-from PIL import Image  # Pillow for image compression
+from PIL import Image
 
-# Folder to store images
 IMAGE_FOLDER = "checkin_images"
-MAX_IMAGE_SIZE = (600, 600)  # Optimal resizing while preserving quality
+MAX_IMAGE_SIZE = (600, 600)
 
 class CheckIn(commands.Cog):
     def __init__(self, bot):
@@ -17,11 +16,9 @@ class CheckIn(commands.Cog):
         self.previous_images = {}
 
     def hash_image(self, image_bytes):
-        """Generate a hash for the image to prevent duplicates."""
         return hashlib.md5(image_bytes).hexdigest()
 
     def save_image_locally(self, user_id, image_hash, image_bytes):
-        """Save image in WebP format locally, with compression & resizing."""
         user_folder = os.path.join(IMAGE_FOLDER, str(user_id))
         os.makedirs(user_folder, exist_ok=True)
 
@@ -30,19 +27,13 @@ class CheckIn(commands.Cog):
             f.write(image_bytes)
 
         try:
-            # Open the image & convert to WebP with compression
             img = Image.open(original_path)
-
-            # Resize image while maintaining aspect ratio
             img.thumbnail(MAX_IMAGE_SIZE, Image.LANCZOS)
-
-            # Save as WebP with lossy compression (quality=85)
             img.save(original_path, "WEBP", quality=85, optimize=True)
-
         except Exception as e:
             print(f"Error compressing image {original_path}: {e}")
 
-        return original_path  # Return WebP compressed file path
+        return original_path
 
     @app_commands.command(name="checkin", description="Log a check-in for gym, weight, or food.")
     @app_commands.choices(
@@ -62,7 +53,6 @@ class CheckIn(commands.Cog):
         cooldown_message = await db.check_cooldown(user_id, category)
         if cooldown_message:
             await interaction.followup.send(cooldown_message)
-            return
 
         response_text = None
         prompt_text = {
@@ -108,7 +98,10 @@ class CheckIn(commands.Cog):
             image_path = self.save_image_locally(user_id, image_hash, image_bytes)
 
             async with db.pool.acquire() as conn:
-                existing_checkin = await conn.fetchrow("SELECT * FROM checkins WHERE user_id = $1 AND image_hash = $2", user_id, image_hash)
+                existing_checkin = await conn.fetchrow(
+                    "SELECT * FROM checkins WHERE user_id = $1 AND image_hash = $2",
+                    user_id, image_hash
+                )
 
             if existing_checkin:
                 await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
@@ -116,7 +109,7 @@ class CheckIn(commands.Cog):
 
             result = await db.log_checkin(user_id, username, category, image_hash, image_path, response_text, weight)
 
-            if result == "success":
+            if result in ["success_with_point", "success_no_point"]:
                 await image_message.delete()
                 await upload_prompt.delete()
 
@@ -127,17 +120,17 @@ class CheckIn(commands.Cog):
 
                 file = discord.File(image_path, filename="checkin.webp")
                 embed = discord.Embed(
-                    title="✅ Gym Check-In Completed!",
+                    title=f"✅ {category.capitalize()} Check-In Completed!",
                     description=f"**{username}** checked in for **{category}**.\n**{response_text}**",
                     color=discord.Color.green()
                 )
                 embed.set_image(url="attachment://checkin.webp")
-                embed.set_footer(text="You earned 1 point!")
+
+                footer = "You earned 1 point!" if result == "success_with_point" else "Check-in recorded. No point earned today."
+                embed.set_footer(text=footer)
 
                 await interaction.followup.send(embed=embed, file=file)
 
-            elif result == "cooldown":
-                await interaction.followup.send(f"⏳ You have already checked in for **{category}** today. Try again tomorrow!")
             else:
                 await interaction.followup.send("❌ There was an error logging your check-in. Please try again.")
 
