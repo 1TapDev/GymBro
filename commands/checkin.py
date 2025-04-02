@@ -53,6 +53,7 @@ class CheckIn(commands.Cog):
         cooldown_message = await db.check_cooldown(user_id, category)
         if cooldown_message:
             await interaction.followup.send(cooldown_message)
+            # DO NOT return here — allow them to still check in, just without earning a point
 
         response_text = None
         prompt_text = {
@@ -107,32 +108,45 @@ class CheckIn(commands.Cog):
                 await interaction.followup.send("⚠️ You have already used this image for a check-in. Please upload a new one.")
                 return
 
-            result = await db.log_checkin(user_id, username, category, image_hash, image_path, response_text, weight)
-
-            if result in ["success_with_point", "success_no_point"]:
-                await image_message.delete()
-                await upload_prompt.delete()
-
-                if not os.path.exists(image_path):
-                    print(f"❌ Image file not found: {image_path}")
-                    await interaction.followup.send("⚠️ Image not found. Please try again.")
-                    return
-
-                file = discord.File(image_path, filename="checkin.webp")
-                embed = discord.Embed(
-                    title=f"✅ {category.capitalize()} Check-In Completed!",
-                    description=f"**{username}** checked in for **{category}**.\n**{response_text}**",
-                    color=discord.Color.green()
+            if category == "weight":
+                result = await db.log_checkin(
+                    user_id, username, category, image_hash, image_path,
+                    workout=None, weight=weight, meal=None
                 )
-                embed.set_image(url="attachment://checkin.webp")
+            elif category == "gym":
+                result = await db.log_checkin(
+                    user_id, username, category, image_hash, image_path,
+                    workout=response_text, weight=None, meal=None
+                )
+            elif category == "food":
+                result = await db.log_checkin(
+                    user_id, username, category, image_hash, image_path,
+                    workout=None, weight=None, meal=response_text
+                )
 
-                footer = "You earned 1 point!" if result == "success_with_point" else "Check-in recorded. No point earned today."
-                embed.set_footer(text=footer)
-
-                await interaction.followup.send(embed=embed, file=file)
-
-            else:
+            if result not in ["success_with_point", "success_no_point"]:
                 await interaction.followup.send("❌ There was an error logging your check-in. Please try again.")
+                return
+
+            await image_message.delete()
+            await upload_prompt.delete()
+
+            if not os.path.exists(image_path):
+                print(f"❌ Image file not found: {image_path}")
+                await interaction.followup.send("⚠️ Image not found. Please try again.")
+                return
+
+            file = discord.File(image_path, filename="checkin.webp")
+            embed = discord.Embed(
+                title=f"✅ {category.capitalize()} Check-In Completed!",
+                description=f"**{username}** checked in for **{category}**.\n**{response_text}**",
+                color=discord.Color.green()
+            )
+            embed.set_image(url="attachment://checkin.webp")
+            embed.set_footer(text="You earned 1 point!" if result == "success_with_point"
+                             else f"⚠️ You've already earned a point {'this week' if category == 'weight' else 'today'} for {category}. No point awarded.")
+
+            await interaction.followup.send(embed=embed, file=file)
 
         except asyncio.TimeoutError:
             await upload_prompt.delete()

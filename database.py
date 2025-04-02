@@ -92,7 +92,7 @@ class Database:
                         saturday = current_time_est - timedelta(days=days_since_saturday)
                         window_start_naive = datetime(saturday.year, saturday.month, saturday.day)
 
-                    window_start = EST.localize(window_start_naive)
+                    window_start = window_start_naive  # it's already in EST
 
                     already_earned_point = await conn.fetchval("""
                         SELECT COUNT(*) FROM checkins
