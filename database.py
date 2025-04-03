@@ -18,46 +18,40 @@ class Database:
             print(f"❌ Database connection failed: {e}")  # Log failure
 
     async def check_cooldown(self, user_id, category):
-        """Check if a user is on cooldown by reading the timestamp from the checkins table (in EST)."""
         async with self.pool.acquire() as conn:
             try:
-                last_checkin = await conn.fetchrow("""
-                    SELECT timestamp FROM checkins 
-                    WHERE user_id = $1 AND category = $2 
-                    ORDER BY timestamp DESC LIMIT 1
-                """, user_id, category)
-
-                # Get current time in UTC and convert to EST
                 current_time_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
                 current_time_est = current_time_utc.astimezone(EST)
-                today_est = current_time_est.date()  # Get today's date in EST
+                today_est = current_time_est.date()
 
-                if last_checkin:
-                    # Convert last check-in timestamp to EST
-                    last_checkin_time_utc = last_checkin["timestamp"].replace(tzinfo=pytz.utc)
-                    last_checkin_time_est = last_checkin_time_utc.astimezone(EST)
-                    last_checkin_date = last_checkin_time_est.date()  # Get last check-in date
+                if category == "weight":
+                    weekday = current_time_est.weekday()
+                    if weekday == 5:
+                        window_start = EST.localize(current_time_est.replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None))
+                    else:
+                        days_since_saturday = (weekday - 5) % 7
+                        dt = current_time_est - timedelta(days=days_since_saturday)
+                        window_start = EST.localize(dt.replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None))
 
-                    if category in ["gym", "food"]:
-                        # User must wait until midnight EST
-                        next_reset = datetime.combine(today_est + timedelta(days=1), datetime.min.time(), EST)
-                        if last_checkin_date == today_est:
-                            remaining_time = next_reset - current_time_est
-                            hours, minutes = divmod(int(remaining_time.total_seconds()) // 60, 60)
-                            return f"⏳ You have already checked in for **{category}** today. Try again in **{hours}h {minutes}m** (after midnight EST)!"
+                    existing = await conn.fetchval("""
+                        SELECT COUNT(*) FROM checkins
+                        WHERE user_id = $1 AND category = $2 AND timestamp >= $3
+                    """, user_id, category, window_start)
 
-                    elif category == "weight":
-                        # User must wait until next **Sunday**
-                        last_sunday = last_checkin_date - timedelta(days=last_checkin_date.weekday() + 1)  # Find last Sunday
-                        next_sunday = last_sunday + timedelta(days=7)  # Find next Sunday
+                    if existing:
+                        return "⚖️ You've already checked in for **weight** this week. Try again next Saturday!"
 
-                        if current_time_est < datetime.combine(next_sunday, datetime.min.time(), EST):
-                            remaining_time = datetime.combine(next_sunday, datetime.min.time(), EST) - current_time_est
-                            days, remainder = divmod(int(remaining_time.total_seconds()), 86400)
-                            hours, minutes = divmod(remainder // 60, 60)
-                            return f"⏳ You have already checked in for **{category}** this week. Try again in **{days}d {hours}h {minutes}m**."
+                else:
+                    already_earned = await conn.fetchval("""
+                        SELECT COUNT(*) FROM checkins
+                        WHERE user_id = $1 AND category = $2
+                        AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') = $3
+                    """, user_id, category, today_est)
 
-                return None  # No cooldown, user can check in
+                    if already_earned:
+                        return f"⚠️ You've already earned a point today for **{category}**. This check-in will be recorded, but no additional points will be awarded."
+
+                return None
 
             except Exception as e:
                 print(f"❌ Error checking cooldown for user {user_id}: {e}")
@@ -83,67 +77,72 @@ class Database:
                 print(f"❌ Error adding user {username}: {e}")
 
     async def log_checkin(self, user_id, username, category, image_hash, image_path, workout=None, weight=None, meal=None):
-        """Log a check-in only after the image is confirmed, store resized image path, and update points dynamically."""
         async with self.pool.acquire() as conn:
             try:
-                if await self.check_cooldown(user_id, category):
-                    print(f"⏳ User {user_id} is still on cooldown for {category}. Check-in denied.")
-                    return "cooldown"
+                current_time_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
+                current_time_est = current_time_utc.astimezone(EST)
+                today_est = current_time_est.date()
 
-                print(f"📝 Logging check-in for user {user_id} ({username}) in category {category} with image path {image_path}...")
+                if category == "weight":
+                    weekday = current_time_est.weekday()
+                    if weekday == 5:
+                        window_start_naive = datetime(current_time_est.year, current_time_est.month, current_time_est.day)
+                    else:
+                        days_since_saturday = (weekday - 5) % 7
+                        saturday = current_time_est - timedelta(days=days_since_saturday)
+                        window_start_naive = datetime(saturday.year, saturday.month, saturday.day)
 
-                if not image_hash:
-                    print("❌ No valid image uploaded. Check-in will NOT be recorded.")
-                    return "no_image"
+                    window_start = window_start_naive  # it's already in EST
 
-                # ✅ Ensure user exists in `users` table before inserting check-ins and update username
+                    already_earned_point = await conn.fetchval("""
+                        SELECT COUNT(*) FROM checkins
+                        WHERE user_id = $1 AND category = $2 AND timestamp >= $3
+                    """, user_id, category, window_start)
+
+                    earned_point = already_earned_point == 0
+                else:
+                    already_earned_point = await conn.fetchval("""
+                        SELECT COUNT(*) FROM checkins
+                        WHERE user_id = $1 AND category = $2
+                        AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') = $3
+                    """, user_id, category, today_est)
+
+                    earned_point = already_earned_point == 0
+
                 await conn.execute("""
                     INSERT INTO users (user_id, username, points)
                     VALUES ($1, $2, 0)
-                    ON CONFLICT (user_id) DO UPDATE 
-                    SET username = EXCLUDED.username
+                    ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username
                 """, user_id, username)
 
-                # ✅ Ensure user exists in `progress` table before inserting check-in
                 await conn.execute("""
                     INSERT INTO progress (user_id, total_gym_checkins, total_food_logs, total_weight_change)
-                    VALUES ($1, 0, 0, 0) 
+                    VALUES ($1, 0, 0, 0)
                     ON CONFLICT (user_id) DO NOTHING
                 """, user_id)
 
-                # ✅ Insert check-in record with the resized image path
                 await conn.execute("""
                     INSERT INTO checkins (user_id, category, image_hash, image_path, workout, weight, meal, timestamp)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-                """, user_id, category, image_hash, image_path, workout, weight, meal)
+                """, user_id, category, image_hash, image_path,
+                      workout if category in ("gym", "food", "weight") else None,
+                      weight if category == "weight" else None,
+                      meal if category == "food" else None)
 
-                print("✅ Check-in recorded successfully!")
-
-                # ✅ Update progress tracking
                 if category == "gym":
-                    await conn.execute("""
-                        UPDATE progress SET total_gym_checkins = total_gym_checkins + 1 WHERE user_id = $1
-                    """, user_id)
+                    await conn.execute("UPDATE progress SET total_gym_checkins = total_gym_checkins + 1 WHERE user_id = $1", user_id)
                 elif category == "food":
-                    await conn.execute("""
-                        UPDATE progress SET total_food_logs = total_food_logs + 1 WHERE user_id = $1
-                    """, user_id)
+                    await conn.execute("UPDATE progress SET total_food_logs = total_food_logs + 1 WHERE user_id = $1", user_id)
                 elif category == "weight":
-                    await conn.execute("""
-                        UPDATE progress SET total_weight_change = $1 WHERE user_id = $2
-                    """, weight, user_id)
+                    await conn.execute("UPDATE progress SET total_weight_change = $1 WHERE user_id = $2", weight, user_id)
 
-                # ✅ Fetch updated points dynamically
-                updated_points = await self.get_user_points(user_id)
-
-                # ✅ Ensure points are updated in `users` table
-                await conn.execute("""
-                    UPDATE users SET points = $1 WHERE user_id = $2
-                """, updated_points, user_id)
-
-                print(f"🏆 Updated points for user {user_id}: {updated_points}")
-
-                return "success"
+                if earned_point:
+                    await conn.execute("UPDATE users SET points = points + 1 WHERE user_id = $1", user_id)
+                    print(f"🏆 Point awarded to user {user_id}")
+                    return "success_with_point"
+                else:
+                    print(f"✅ Check-in recorded for user {user_id}, but no point awarded (already earned this period)")
+                    return "success_no_point"
 
             except Exception as e:
                 print(f"❌ Error logging check-in for user {user_id}: {e}")
