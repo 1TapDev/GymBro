@@ -53,7 +53,6 @@ class CheckIn(commands.Cog):
         cooldown_message = await db.check_cooldown(user_id, category)
         if cooldown_message:
             await interaction.followup.send(cooldown_message)
-            # DO NOT return here — allow them to still check in, just without earning a point
 
         response_text = None
         prompt_text = {
@@ -111,7 +110,7 @@ class CheckIn(commands.Cog):
             if category == "weight":
                 result = await db.log_checkin(
                     user_id, username, category, image_hash, image_path,
-                    workout=None, weight=weight, meal=None
+                    workout=str(weight), weight=weight, meal=None
                 )
             elif category == "gym":
                 result = await db.log_checkin(
@@ -121,7 +120,7 @@ class CheckIn(commands.Cog):
             elif category == "food":
                 result = await db.log_checkin(
                     user_id, username, category, image_hash, image_path,
-                    workout=None, weight=None, meal=response_text
+                    workout=response_text, weight=None, meal=None
                 )
 
             if result not in ["success_with_point", "success_no_point"]:

@@ -125,7 +125,7 @@ class Database:
                     INSERT INTO checkins (user_id, category, image_hash, image_path, workout, weight, meal, timestamp)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
                 """, user_id, category, image_hash, image_path,
-                      workout if category == "gym" else None,
+                      workout if category in ("gym", "food", "weight") else None,
                       weight if category == "weight" else None,
                       meal if category == "food" else None)
 
