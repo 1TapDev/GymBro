@@ -5,9 +5,9 @@ from database import db
 import os
 import math
 
-# Constants
 CHECKINS_PER_PAGE = 4
 IMAGE_FOLDER = "checkin_images"
+
 
 class ViewCheckIn(commands.Cog):
     def __init__(self, bot):
@@ -37,7 +37,6 @@ class ViewCheckIn(commands.Cog):
         await self.send_checkin_page(interaction, checkins, page=0, category=category, target_user=target_user)
 
     async def send_checkin_page(self, interaction, checkins, page, category, target_user):
-        """Displays check-in details with pagination support."""
         try:
             total_pages = math.ceil(len(checkins) / CHECKINS_PER_PAGE)
             start_idx = page * CHECKINS_PER_PAGE
@@ -60,31 +59,35 @@ class ViewCheckIn(commands.Cog):
                 elif category == "weight":
                     details += f"⚖️ **Weight:** {checkin['weight']} lbs\n"
                 elif category == "food":
-                    details += f"🍽️ **Meal:** {checkin['workout']}\n"
+                    details += f"🍽️ **Meal:** {checkin['meal']}\n"
 
                 embed.add_field(name="", value=details.strip(), inline=False)
 
-                # Attach only the images for the current page
                 if checkin["image_path"] and os.path.exists(checkin["image_path"]):
                     file = discord.File(checkin["image_path"], filename=os.path.basename(checkin["image_path"]))
                     image_files.append(file)
 
-            # Add pagination buttons if multiple pages exist
+            # Pagination
             view = None
             if total_pages > 1:
                 view = PaginationButtons(self, checkins, page, category, target_user)
 
-            await interaction.edit_original_response(embed=embed, attachments=image_files, view=view)
+            # Add Back to Profile button
+            combined_view = view or BackToProfileButton(target_user, interaction.client)
+            if view:
+                for item in BackToProfileButton(target_user, interaction.client).children:
+                    combined_view.add_item(item)
+
+            await interaction.edit_original_response(embed=embed, attachments=image_files, view=combined_view)
 
         except Exception as e:
-            print(f"Error in send_checkin_page: {e}")
-            await interaction.followup.send(f"❌ An error occurred while displaying the check-ins: {str(e)}")
+            print(f"❌ Error in send_checkin_page: {e}")
+            await interaction.followup.send(f"❌ An error occurred while displaying check-ins: {str(e)}")
+
 
 class PaginationButtons(discord.ui.View):
-    """Handles pagination buttons for check-ins."""
-
     def __init__(self, cog, checkins, page, category, target_user):
-        super().__init__(timeout=600)  # 10-minute timeout
+        super().__init__(timeout=600)
         self.cog = cog
         self.checkins = checkins
         self.page = page
@@ -95,20 +98,36 @@ class PaginationButtons(discord.ui.View):
         self.next.disabled = (page + 1) * CHECKINS_PER_PAGE >= len(checkins)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Allow **anyone** to navigate pages."""
-        return True  # 🔥 Anyone can press Next/Previous!
+        return True
 
-    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, custom_id="prev_page")
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary)
     async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Handles Previous Page button."""
         await interaction.response.defer()
         await self.cog.send_checkin_page(interaction, self.checkins, self.page - 1, self.category, self.target_user)
 
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, custom_id="next_page")
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Handles Next Page button."""
         await interaction.response.defer()
         await self.cog.send_checkin_page(interaction, self.checkins, self.page + 1, self.category, self.target_user)
+
+
+class BackToProfileButton(discord.ui.View):
+    def __init__(self, user, bot):
+        super().__init__(timeout=60)
+        self.user = user
+        self.bot = bot
+
+    @discord.ui.button(label="🔙 Back to Profile", style=discord.ButtonStyle.danger)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        profile_cog = self.bot.get_cog("Profile")
+        if not profile_cog:
+            await interaction.response.send_message("❌ Profile view not available.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        await profile_cog.profile(interaction, user=self.user)
+
+
 
 async def setup(bot):
     await bot.add_cog(ViewCheckIn(bot))
