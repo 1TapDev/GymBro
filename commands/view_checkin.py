@@ -119,15 +119,16 @@ class BackToProfileButton(discord.ui.View):
 
     @discord.ui.button(label="🔙 Back to Profile", style=discord.ButtonStyle.danger)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        profile_cog = self.bot.get_cog("Profile")
-        if not profile_cog:
-            await interaction.response.send_message("❌ Profile view not available.", ephemeral=True)
-            return
-
-        await interaction.response.defer()
-        await profile_cog.profile(interaction, user=self.user)
-
-
+        try:
+            from commands.profile import generate_profile_embeds
+            embed1, embed2, view = await generate_profile_embeds(self.user, self.bot, interaction)
+            await interaction.response.edit_message(embed=embed1, view=view)
+        except Exception as e:
+            print("❌ Back to profile error:", e)
+            try:
+                await interaction.response.send_message("Something went wrong returning to profile.", ephemeral=True)
+            except:
+                pass
 
 async def setup(bot):
     await bot.add_cog(ViewCheckIn(bot))
