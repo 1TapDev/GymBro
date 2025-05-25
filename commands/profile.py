@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from discord.ui import View, Button
 from database import db
+import os
 
 
 class ProfileView(View):
@@ -17,7 +18,7 @@ class ProfileView(View):
 
     def update_buttons(self):
         for child in self.children:
-            if isinstance(child, Button):
+            if isinstance(child, Button) and hasattr(child, 'custom_id'):
                 if child.custom_id == "page_prev":
                     child.disabled = self.current_page == 1
                 elif child.custom_id == "page_next":
@@ -35,17 +36,29 @@ class ProfileView(View):
         self.update_buttons()
         await interaction.response.edit_message(embed=self.embed2, view=self)
 
-    @discord.ui.button(label="🏋️ Gym Check-ins", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="🏋️ Gym Check-ins", style=discord.ButtonStyle.success, row=1, custom_id="checkin_gym")
     async def gym_button(self, interaction: discord.Interaction, button: Button):
         await self._handle_checkin(interaction, "gym")
 
-    @discord.ui.button(label="⚖️ Weight Check-ins", style=discord.ButtonStyle.success, row=2)
+    @discord.ui.button(label="⚖️ Weight Check-ins", style=discord.ButtonStyle.success, row=1, custom_id="checkin_weight")
     async def weight_button(self, interaction: discord.Interaction, button: Button):
         await self._handle_checkin(interaction, "weight")
 
-    @discord.ui.button(label="🍽️ Food Check-ins", style=discord.ButtonStyle.success, row=3)
+    @discord.ui.button(label="🍽️ Food Check-ins", style=discord.ButtonStyle.success, row=1, custom_id="checkin_food")
     async def food_button(self, interaction: discord.Interaction, button: Button):
         await self._handle_checkin(interaction, "food")
+
+    @discord.ui.button(label="🏋️ Deadlift PR", style=discord.ButtonStyle.danger, row=2, custom_id="pr_deadlift")
+    async def deadlift_pr(self, interaction: discord.Interaction, button: Button):
+        await self._handle_pr(interaction, "deadlift")
+
+    @discord.ui.button(label="🏋️ Bench Press PR", style=discord.ButtonStyle.danger, row=2, custom_id="pr_bench")
+    async def bench_pr(self, interaction: discord.Interaction, button: Button):
+        await self._handle_pr(interaction, "bench")
+
+    @discord.ui.button(label="🏋️ Squat PR", style=discord.ButtonStyle.danger, row=2, custom_id="pr_squat")
+    async def squat_pr(self, interaction: discord.Interaction, button: Button):
+        await self._handle_pr(interaction, "squat")
 
     async def _handle_checkin(self, interaction, category):
         checkin_cog = self.bot.get_cog("ViewCheckIn")
@@ -61,6 +74,57 @@ class ProfileView(View):
 
         await checkin_cog.send_checkin_page(interaction, checkins, page=0, category=category, target_user=self.user)
 
+    async def _handle_pr(self, interaction, lift):
+        try:
+            await interaction.response.defer()
+            pr_data = await db.get_personal_records(self.user.id)
+            pr_videos = await db.get_pr_videos(self.user.id)
+
+            pr_value = pr_data.get(lift, "Not set")
+
+            embed = discord.Embed(
+                title=f"🏆 {self.user.display_name}'s {lift.capitalize()} PR",
+                description=f"🏋️ **{lift.capitalize()} PR:** {pr_value} lbs",
+                color=discord.Color.orange()
+            )
+
+            await interaction.edit_original_response(embed=embed, view=BackToProfileView(self.user, self.bot))
+
+            video_column = f"{lift}_video"
+            if video_column in pr_videos and pr_videos[video_column]:
+                video_path = pr_videos[video_column]
+                if os.path.exists(video_path):
+                    file = discord.File(video_path, filename=f"{lift}.mp4")
+                    await interaction.followup.send(f"✅ {lift.capitalize()} PR Attempt:", file=file)
+                else:
+                    await interaction.followup.send(f"⚠️ No recorded video found for {lift.capitalize()} PR.")
+        except Exception as e:
+            print(f"❌ PR button error: {e}")
+            try:
+                await interaction.followup.send("Something went wrong loading this PR.", ephemeral=True)
+            except:
+                pass
+
+
+class BackToProfileView(discord.ui.View):
+    def __init__(self, user, bot):
+        super().__init__(timeout=60)
+        self.user = user
+        self.bot = bot
+
+    @discord.ui.button(label="🔙 Back to Profile", style=discord.ButtonStyle.danger)
+    async def back(self, interaction: discord.Interaction, button: Button):
+        try:
+            from commands.profile import generate_profile_embeds
+            embed1, embed2, view = await generate_profile_embeds(self.user, self.bot, interaction)
+            await interaction.edit_original_response(embed=embed1, view=view)
+        except Exception as e:
+            print("❌ Back to profile error:", e)
+            try:
+                await interaction.response.send_message("Something went wrong returning to profile.", ephemeral=True)
+            except:
+                pass
+
 
 class Profile(commands.Cog):
     def __init__(self, bot):
@@ -70,16 +134,20 @@ class Profile(commands.Cog):
     @app_commands.describe(user="Whose profile do you want to view?")
     async def profile(self, interaction: discord.Interaction, user: discord.Member = None):
         await interaction.response.defer()
-        target_user = user or interaction.user
-        embed1, embed2, view = await generate_profile_embeds(target_user, self.bot, interaction)
-        await interaction.followup.send(embed=embed1, view=view)
+        try:
+            target_user = user or interaction.user
+            embed1, embed2, view = await generate_profile_embeds(target_user, self.bot, interaction)
+            await interaction.followup.send(embed=embed1, view=view)
+        except Exception as e:
+            print("❌ Profile command error:", e)
+            await interaction.followup.send("Something went wrong loading your profile.", ephemeral=True)
 
 
 async def setup(bot):
     await bot.add_cog(Profile(bot))
 
 
-# HELPER FUNCTION
+# Profile Embed Generator
 async def generate_profile_embeds(user, bot, interaction):
     user_id = user.id
     points = await db.get_user_points(user_id)
