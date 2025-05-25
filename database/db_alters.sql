@@ -68,3 +68,6 @@ CREATE TABLE IF NOT EXISTS prize_suggestions (
     username TEXT,
     prize TEXT
 );
+
+DROP TABLE IF EXISTS prize_suggestions;
+
