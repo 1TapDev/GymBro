@@ -1,365 +1,458 @@
+# commands/challenge.py (Updated with integration)
 import discord
 import os
 import asyncio
 import uuid
 import pytz
 from discord import app_commands
+from discord.ui import View, Select
 from discord.ext import commands, tasks
 from database import db
 from datetime import datetime, timedelta
+from .challenge_end import ChallengeEnd
+from .challenge_voting import ChallengeVoting
 
 # Set Eastern Time (New York Timezone)
 NYC_TZ = pytz.timezone("America/New_York")
 
-VOTING_CHANNEL_ID = 1235378047390187601  # Replace with actual channel ID
+class ChallengeDropdown(Select):
+    def __init__(self, options):
+        super().__init__(placeholder="Select a challenge to join...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        challenge_id = int(self.values[0])
+        user_id = interaction.user.id
+
+        print(f"[Join] User {user_id} selected challenge {challenge_id}")
+
+        try:
+            async with db.pool.acquire() as conn:
+                already = await conn.fetchval("""
+                    SELECT COUNT(*) FROM challenge_participants
+                    WHERE challenge_id = $1 AND user_id = $2
+                """, challenge_id, user_id)
+
+                if already:
+                    await interaction.response.send_message("❌ You've already joined this challenge.", ephemeral=True)
+                    print(f"[Join] Already joined: user {user_id}")
+                    return
+
+                username = interaction.user.display_name or interaction.user.name
+
+                await conn.execute("""
+                    INSERT INTO challenge_participants (challenge_id, user_id, username)
+                    VALUES ($1, $2, $3)
+                """, challenge_id, user_id, username)
+
+            try:
+                user = await interaction.client.fetch_user(user_id)
+                dm = await user.create_dm()
+
+                embed = discord.Embed(
+                    title="📸 Welcome to the Challenge!",
+                    description=(
+                        "**Please upload your 4 initial photos** in these poses:\n\n"
+                        "1️⃣ Relaxed Front Pose\n"
+                        "2️⃣ Front Double Biceps\n"
+                        "3️⃣ Rear Double Biceps\n"
+                        "4️⃣ Relaxed Back Pose\n\n"
+                        "⏰ You can send all at once or one at a time. Type 'done' when finished.\n"
+                    ),
+                    color=discord.Color.orange()
+                )
+                embed.set_footer(text="Reply to this DM to begin.")
+                await dm.send(embed=embed)
+
+                # Send examples
+                example_photos = [
+                    "assets/example.png", "assets/example1.png",
+                    "assets/example2.png", "assets/example3.png"
+                ]
+                for photo in example_photos:
+                    if os.path.exists(photo):
+                        await dm.send(file=discord.File(photo))
+
+                # Ask for photos
+                await dm.send("📸 Upload your 4 initial photos now. Type 'done' when you're finished.")
+
+                def photo_check(m):
+                    return m.author.id == user_id and m.channel == dm
+
+                photos = []
+                while len(photos) < 4:
+                    msg = await interaction.client.wait_for("message", check=photo_check, timeout=600)
+                    if msg.content.lower() == "done":
+                        break
+                    for attachment in msg.attachments:
+                        if len(photos) < 4:
+                            photo_path = f"challenge/{challenge_id}/initial/{user_id}"
+                            os.makedirs(photo_path, exist_ok=True)
+                            file_path = os.path.join(photo_path, f"photo_{len(photos) + 1}_{attachment.filename}")
+                            await attachment.save(file_path)
+                            photos.append(file_path)
+                    await dm.send(f"✅ Received {len(photos)}/4 photos.")
+
+                # Ask for weight
+                await dm.send("⚖️ What is your **current weight** in pounds?")
+                weight_msg = await interaction.client.wait_for("message", check=photo_check, timeout=300)
+                current_weight = float(weight_msg.content.strip())
+
+                await dm.send("🎯 What is your **goal weight**?")
+                goal_weight_msg = await interaction.client.wait_for("message", check=photo_check, timeout=300)
+                goal_weight = float(goal_weight_msg.content.strip())
+
+                await dm.send("💬 What is your **personal goal** for this challenge?")
+                goal_msg = await interaction.client.wait_for("message", check=photo_check, timeout=300)
+                personal_goal = goal_msg.content.strip()
+
+                # Update DB
+                async with db.pool.acquire() as conn:
+                    await conn.execute("""
+                        UPDATE challenge_participants
+                        SET current_weight = $1,
+                            goal_weight = $2,
+                            personal_goal = $3,
+                            initial_photos = $4
+                        WHERE challenge_id = $5 AND user_id = $6
+                    """, current_weight, goal_weight, personal_goal, photos, challenge_id, user_id)
+
+                await dm.send("✅ You're fully registered for the challenge. Good luck! 💪")
+
+            except Exception as e:
+                print(f"❌ DM process failed for user {user_id}: {e}")
+
+            await interaction.response.send_message("✅ You’ve joined the challenge!", ephemeral=True)
+            print(f"[Join] Success: user {user_id} joined challenge {challenge_id}")
+
+        except Exception as e:
+            print(f"❌ [Join] Error joining challenge: {e}")
+            try:
+                await interaction.response.send_message("⚠️ An error occurred while trying to join.", ephemeral=True)
+            except discord.InteractionResponded:
+                await interaction.followup.send("⚠️ An error occurred after selection.", ephemeral=True)
+
+
+class ChallengeSelectView(View):
+    def __init__(self, options):
+        super().__init__(timeout=60)
+        self.add_item(ChallengeDropdown(options))
 
 class Challenge(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Initialize sub-components
+        self.challenge_end = ChallengeEnd(bot)
+        self.challenge_voting = ChallengeVoting(bot)
 
     @app_commands.command(name="challenge", description="Start a new challenge!")
+    @app_commands.describe(
+        days="Duration of the challenge in days",
+        name="Name of the challenge",
+        goal="Description of the challenge goal"
+    )
     async def challenge(self, interaction: discord.Interaction, days: int, name: str, goal: str):
-        print("[DEBUG] Received /challenge start command")
+        """Start a new fitness challenge"""
+        # Check if user has admin permissions
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Only administrators can start challenges!", ephemeral=True)
+            return
+
+        # For testing: allow any duration
+        if days <= 0:
+            await interaction.response.send_message("❌ Duration must be at least 1 minute (0.0007 days)!",
+                                                    ephemeral=True)
+            return
+
+        if len(name) > 50:
+            await interaction.response.send_message("❌ Challenge name must be 50 characters or less!", ephemeral=True)
+            return
 
         await interaction.response.defer()
-        print("[DEBUG] Interaction response deferred.")
 
-        # Ensure all timestamps are naive before inserting into PostgreSQL
-        start_date = datetime.now(NYC_TZ).replace(tzinfo=None)  # Remove timezone info
+        # Note: Multiple challenges allowed
+        print(f"{interaction.user.name} is creating a challenge: {name}")
+
+        # Create challenge (rest of existing code...)
+        start_date = datetime.now(NYC_TZ).replace(tzinfo=None)
         end_date = (datetime.now(NYC_TZ) + timedelta(days=days)).replace(tzinfo=None)
 
-        print(f"[DEBUG] Challenge start date set to (naive): {start_date}")
-        print(f"[DEBUG] Challenge end date set to (naive): {end_date}")
+        # Optional: show seconds/minutes if <1 day for clarity in embed
+        duration_str = (
+            f"{int(days * 24 * 60)} minutes"
+            if days < 1 else f"{days} Days"
+        )
 
         try:
-            print("[DEBUG] Challenge date calculation successful.")
             async with db.pool.acquire() as conn:
-                print("[DEBUG] Acquired database connection.")
-                await conn.execute(
-                    """
+                await conn.execute("""
                     INSERT INTO challenges (name, goal, start_date, end_date, status)
                     VALUES ($1, $2, $3, $4, 'active')
-                    """, name, goal, start_date, end_date
-                )
-                print("[DEBUG] Challenge successfully inserted into database.")
+                """, name, goal, start_date, end_date)
+
                 challenge_id = await conn.fetchval(
                     "SELECT id FROM challenges WHERE name = $1 ORDER BY start_date DESC LIMIT 1",
                     name
                 )
-        except Exception as e:
-            print(f"[ERROR] Unexpected error: {e}")
-            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
-            return
 
-        # Create challenge announcement message
-        embed = discord.Embed(
-            title=f"🏆 New Challenge: {name}",
-            description=(
-                f"📅 **Duration:** {days} Days\n"
-                f"🕒 **Start Date:** {start_date.strftime('%Y-%m-%d %I:%M %p')}\n"
-                f"🛑 **End Date:** {end_date.strftime('%Y-%m-%d %I:%M %p')}\n"
-                f"🎯 **Goal:** {goal}\n"
-                f"✅ **React to Join!**"
-            ),
-            color=discord.Color.gold()
-        )
+            # Create enhanced challenge announcement
+            embed = discord.Embed(
+                title=f"🏆 New Challenge: {name}",
+                description=(
+                    f"📅 **Duration:** {duration_str}\\n"
+                    f"🕒 **Start Date:** {start_date.strftime('%Y-%m-%d %I:%M %p')}\n"
+                    f"🛑 **End Date:** {end_date.strftime('%Y-%m-%d %I:%M %p')}\n"
+                    f"🎯 **Goal:** {goal}\n\n"
+                    f"**📸 Requirements:**\n"
+                    f"• Submit 4 initial photos (specific poses)\n"
+                    f"• Track your weight progress\n"
+                    f"• Submit 4 final photos at the end\n"
+                    f"• Community voting determines winners!\n\n"
+                    f"✅ **React to Join!**"
+                ),
+                color=discord.Color.gold()
+            )
+            embed.set_footer(text="Good luck to all participants! 💪")
 
-        try:
             challenge_message = await interaction.channel.send(embed=embed)
-            print("[DEBUG] Challenge message sent.")
             await challenge_message.add_reaction("✅")
-            print("[DEBUG] Reaction added to challenge message.")
-            await interaction.followup.send("✅ Challenge created successfully! Users can now join.", ephemeral=True)
+            await interaction.followup.send("✅ Challenge created successfully!", ephemeral=True)
 
-            # Store message ID and channel ID in the database
+            # Store message ID and channel ID
             async with db.pool.acquire() as conn:
                 await conn.execute("""
                     UPDATE challenges SET message_id = $1, channel_id = $2 WHERE id = $3
                 """, challenge_message.id, interaction.channel.id, challenge_id)
 
-            # Start listening for reactions
-            await self.wait_for_reactions(challenge_id)
-
         except Exception as e:
-            print(f"[ERROR] Failed to send challenge message: {e}")
-            await interaction.followup.send("❌ Error sending challenge message.", ephemeral=True)
+            await interaction.followup.send(f"❌ Error creating challenge: {e}", ephemeral=True)
 
-    @app_commands.command(name="challenge_participants", description="Show all participants in the current challenge.")
-    async def challenge_participants(self, interaction: discord.Interaction):
-        """Fetches and displays all participants in the active challenge with their actual Discord names."""
+    @app_commands.command(name="challenge_status", description="Check the current challenge status")
+    async def challenge_status(self, interaction: discord.Interaction):
+        """Display detailed information about the active challenge"""
         async with db.pool.acquire() as conn:
-            # Fetch active challenge
-            active_challenge = await conn.fetchrow("SELECT id, name FROM challenges WHERE status = 'active' ORDER BY start_date DESC LIMIT 1")
-            if not active_challenge:
+            challenge = await conn.fetchrow("""
+                SELECT * FROM challenges WHERE status = 'active' ORDER BY start_date DESC LIMIT 1
+            """)
+
+            if not challenge:
                 await interaction.response.send_message("⚠️ No active challenge found!", ephemeral=True)
                 return
 
-            challenge_id = active_challenge["id"]
-            challenge_name = active_challenge["name"]
+            # Get participant count
+            participant_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM challenge_participants WHERE challenge_id = $1
+            """, challenge['id'])
 
-            # Fetch participants
-            participants = await conn.fetch("SELECT user_id FROM challenge_participants WHERE challenge_id = $1", challenge_id)
-            if not participants:
-                await interaction.response.send_message(f"⚠️ No participants found for **{challenge_name}**.", ephemeral=True)
-                return
+            # Calculate time remaining
+            end_date = challenge['end_date']
+            if isinstance(end_date, str):
+                end_date = datetime.fromisoformat(end_date)
+            time_remaining = end_date - datetime.now()
 
-            participant_list = []
-            for p in participants:
-                user = interaction.guild.get_member(p["user_id"])  # Get Discord user object
-                display_name = user.display_name if user else "Unknown"
-                participant_list.append(f"✅ {display_name}")
-
-            participant_text = "\n".join(participant_list)
-
+            # Create status embed
             embed = discord.Embed(
-                title=f"🏆 Participants in {challenge_name}",
-                description=participant_text,
-                color=discord.Color.green()
+                title=f"📊 Challenge Status: {challenge['name']}",
+                color=discord.Color.blue()
             )
+
+            embed.add_field(name="🎯 Goal", value=challenge['goal'], inline=False)
+            embed.add_field(name="👥 Participants", value=str(participant_count), inline=True)
+            embed.add_field(name="⏰ Time Remaining", value=f"{time_remaining.days} days", inline=True)
+
+            status = "📸 Collecting Photos" if challenge['photo_collection_started'] else "🟢 Active"
+            if challenge['voting_started']:
+                status = "🗳️ Voting in Progress"
+            elif challenge['results_posted']:
+                status = "✅ Completed"
+
+            embed.add_field(name="📌 Status", value=status, inline=True)
 
             await interaction.response.send_message(embed=embed)
 
-
-    @app_commands.command(name="join_challenge", description="Join the active fitness challenge!")
-    async def join_challenge(self, interaction: discord.Interaction):
-        """Allows a user to join an active challenge."""
+    @app_commands.command(name="my_challenge_progress", description="View your challenge progress")
+    async def my_challenge_progress(self, interaction: discord.Interaction):
+        """Show user's personal challenge progress"""
         user_id = interaction.user.id
-        username = interaction.user.display_name
 
         async with db.pool.acquire() as conn:
-            # ✅ Check for an active challenge
-            active_challenge = await conn.fetchrow("SELECT id FROM challenges WHERE status = 'active'")
-            if not active_challenge:
-                await interaction.response.send_message("⚠️ No active challenge found! Please check again later.", ephemeral=True)
-                return
-
-            challenge_id = active_challenge["id"]
-
-            # ✅ Check if user is already in the challenge
-            existing_entry = await conn.fetchrow(
-                "SELECT * FROM challenge_participants WHERE challenge_id = $1 AND user_id = $2", challenge_id, user_id
-            )
-            if existing_entry:
-                await interaction.response.send_message("✅ You are already in the challenge!", ephemeral=True)
-                return
-
-            # ✅ Add user to challenge_participants table
-            await conn.execute(
-                """
-                INSERT INTO challenge_participants (challenge_id, user_id, username)
-                VALUES ($1, $2, $3)
-                """,
-                challenge_id, user_id, username
-            )
-
-        await interaction.response.send_message(
-            f"🎉 {interaction.user.mention}, you have successfully joined the challenge! Check your DMs to complete registration.",
-            ephemeral=False)
-
-        # ✅ Start the DM registration process
-        await self.register_user(interaction.user, challenge_id)
-
-    async def wait_for_reactions(self, challenge_id):
-        """Continues waiting for reactions on restart."""
-        print(f"[DEBUG] Resuming reaction listener for active challenge: {challenge_id}")
-
-        async with db.pool.acquire() as conn:
-            challenge_data = await conn.fetchrow("""
-                SELECT message_id, channel_id FROM challenges WHERE id = $1
-            """, challenge_id)
-
-        if not challenge_data:
-            print("[WARNING] No challenge data found for ID:", challenge_id)
-            return
-
-        message_id = challenge_data["message_id"]
-        channel_id = challenge_data["channel_id"]
-
-        print(f"[DEBUG] Retrieved message_id: {message_id}, channel_id: {channel_id}")
-        if not message_id or not channel_id:
-            print("[ERROR] No message ID or channel ID found for challenge.")
-            return
-
-        print("[DEBUG] Checking if bot can access channel...")
-        channel = self.bot.get_channel(channel_id)
-
-        if not channel:
-            print(f"[ERROR] Could not find channel with ID {channel_id}. Check if bot has access!")
-            return
-
-        try:
-            await asyncio.sleep(2)
-            challenge_message = await channel.fetch_message(message_id)
-            print(f"[DEBUG] ✅ Successfully fetched challenge message {challenge_message.id}")
-        except discord.NotFound:
-            print("[WARNING] Challenge message not found.")
-            return
-        except discord.Forbidden:
-            print("[ERROR] ❌ Bot does not have permission to read messages in this channel!")
-            return
-
-        def check(reaction, user):
-            """Log every reaction event to confirm Discord is sending them."""
-            print(f"[DEBUG] 🔄 Reaction detected: {reaction.emoji} from {user.name} on message {reaction.message.id}")
-
-            if user.bot:
-                print(f"[DEBUG] Ignoring bot reaction from {user.name}")
-                return False
-
-            if reaction.message.id != message_id:
-                print(f"[WARNING] Reaction on the wrong message. Expected {message_id}, got {reaction.message.id}")
-                return False
-
-            return str(reaction.emoji) == "✅"
-
-        print("[DEBUG] Waiting for reactions...")
-        while True:
-            try:
-                reaction, user = await self.bot.wait_for("reaction_add", timeout=86400, check=check)
-                print(f"[DEBUG] User {user.name} reacted with {reaction.emoji}")
-
-                # **DEBUG LOG BEFORE DATABASE INSERT**
-                print(
-                    f"[DEBUG] Inserting user {user.name} (ID: {user.id}) into challenge_participants for challenge {challenge_id}")
-
-                async with db.pool.acquire() as conn:
-                    await conn.execute("""
-                        INSERT INTO challenge_participants (challenge_id, user_id, username)
-                        VALUES ($1, $2, $3) ON CONFLICT DO NOTHING
-                    """, challenge_id, user.id, user.name)
-
-                print(
-                    f"[DEBUG] Successfully inserted {user.name} into challenge_participants.")  # ✅ Ensure it was added
-
-                # **Trigger DM process**
-                print(f"[DEBUG] Registering user: {user.name}")  # ✅ Confirm before DM is sent
-                await self.register_user(user)
-
-            except asyncio.TimeoutError:
-                print("[DEBUG] Challenge reaction collection ended.")
-                break  # Stop waiting
-
-    async def check_challenge_end(self):
-        """Checks if challenges have ended and updates status."""
-        async with db.pool.acquire() as conn:
-            challenges = await conn.fetch("""
-                SELECT id FROM challenges WHERE end_date <= NOW() AND status = 'active'
+            # Get active challenge
+            challenge = await conn.fetchrow("""
+                SELECT id, name FROM challenges WHERE status = 'active' ORDER BY start_date DESC LIMIT 1
             """)
 
-            for challenge in challenges:
-                print(f"[DEBUG] Marking challenge {challenge['id']} as completed.")
-                await conn.execute("""
-                    UPDATE challenges SET status = 'completed' WHERE id = $1
-                """, challenge["id"])
+            if not challenge:
+                await interaction.response.send_message("⚠️ No active challenge found!", ephemeral=True)
+                return
+
+            # Get user's participation data
+            participant = await conn.fetchrow("""
+                SELECT * FROM challenge_participants 
+                WHERE challenge_id = $1 AND user_id = $2
+            """, challenge['id'], user_id)
+
+            if not participant:
+                await interaction.response.send_message("❌ You are not participating in the current challenge!",
+                                                        ephemeral=True)
+                return
+
+            # Create progress embed
+            embed = discord.Embed(
+                title=f"📈 Your Progress in {challenge['name']}",
+                color=discord.Color.green()
+            )
+
+            # Weight progress
+            weight_change = 0
+            if participant['final_weight']:
+                weight_change = participant['final_weight'] - participant['current_weight']
+            elif participant['current_weight']:
+                # Get latest weight from check-ins
+                latest_weight = await conn.fetchval("""
+                    SELECT weight FROM checkins 
+                    WHERE user_id = $1 AND category = 'weight' 
+                    ORDER BY timestamp DESC LIMIT 1
+                """, user_id)
+                if latest_weight:
+                    weight_change = latest_weight - participant['current_weight']
+
+            embed.add_field(
+                name="⚖️ Weight Progress",
+                value=(
+                    f"**Starting:** {participant['current_weight']} lbs\n"
+                    f"**Goal:** {participant['goal_weight']} lbs\n"
+                    f"**Current Change:** {weight_change:+.1f} lbs"
+                ),
+                inline=False
+            )
+
+            embed.add_field(
+                name="🎯 Personal Goal",
+                value=participant['personal_goal'] or "Not set",
+                inline=False
+            )
+
+            # Photo status
+            photo_status = "✅ Submitted" if participant['submitted_final'] else "❌ Not yet submitted"
+            embed.add_field(name="📸 Final Photos", value=photo_status, inline=True)
+
+            # Add tips
+            if not participant['submitted_final'] and challenge['photo_collection_started']:
+                embed.add_field(
+                    name="⚠️ Action Required",
+                    value="Final photos collection has started! Check your DMs.",
+                    inline=False
+                )
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="join_challenge", description="Join a specific fitness challenge")
+    async def join_challenge(self, interaction: discord.Interaction):
+        """Allow a user to choose which active challenge to join."""
+
+        async with db.pool.acquire() as conn:
+            active = await conn.fetch("""
+                SELECT id, name, end_date FROM challenges 
+                WHERE status = 'active'
+                ORDER BY start_date DESC
+            """)
+
+        if not active:
+            await interaction.response.send_message("⚠️ No active challenges found.", ephemeral=True)
+            return
+
+        # Build select menu options
+        options = [
+            discord.SelectOption(
+                label=challenge["name"],
+                description=f"Ends {challenge['end_date'].strftime('%b %d')}",
+                value=str(challenge["id"])
+            )
+            for challenge in active
+        ]
+
+        view = ChallengeSelectView(options)
+        await interaction.response.send_message("👇 Choose which challenge to join:", view=view, ephemeral=True)
 
     @commands.Cog.listener()
-    async def on_raw_reaction_add(self, payload):
-        """Handles reactions across servers, even for uncached messages."""
-        if payload.emoji.name != "✅":
-            return  # Ignore non-checkmark reactions
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        print(
+            f"[Reaction Debug] ✅ Detected reaction '{payload.emoji.name}' on message {payload.message_id} from user {payload.user_id}")
 
-        user = self.bot.get_user(payload.user_id)
-        if user is None or user.bot:
-            return  # Ignore bots
+        if payload.emoji.name != "✅":
+            return
+
+        if payload.user_id == self.bot.user.id:
+            return
 
         async with db.pool.acquire() as conn:
             challenge = await conn.fetchrow("""
-                SELECT id, message_id, channel_id FROM challenges 
-                WHERE message_id = $1
+                SELECT id, name FROM challenges 
+                WHERE message_id = $1 AND status = 'active'
             """, payload.message_id)
 
-        if not challenge:
-            print(f"[WARNING] Reaction not linked to an active challenge (Message ID: {payload.message_id})")
-            return
-
-        challenge_id = challenge["id"]
-
-        # ✅ Start DM registration process
-        print(f"[DEBUG] ✅ Reaction linked to challenge ID: {challenge_id} by {user.name}")
-        await self.register_user(user, challenge_id)
-
-    async def register_user(self, user, challenge_id):
-        """Registers a user in the challenge_participants table and asks for weight/goal/photos."""
-        print(f"[DEBUG] Sending registration DM to {user.name}")
-
-        try:
-            dm_channel = await user.create_dm()
-            await dm_channel.send("🏆 Welcome to the challenge! Let's get started.")
-
-            # Ask for weight
-            await dm_channel.send("⚖️ Please enter your current weight:")
-            msg = await self.bot.wait_for("message", check=lambda m: m.author == user and m.channel == dm_channel,
-                                          timeout=120)
-            current_weight = float(msg.content)
-
-            # Ask for goal weight
-            await dm_channel.send("🎯 Please enter your goal weight:")
-            msg = await self.bot.wait_for("message", check=lambda m: m.author == user and m.channel == dm_channel,
-                                          timeout=120)
-            goal_weight = float(msg.content)
-
-            # Ask for personal goal
-            await dm_channel.send("✍️ What is your personal goal? (e.g., 'Lose 10 lbs', 'Bulk up', 'Main Gain')")
-            msg = await self.bot.wait_for("message", check=lambda m: m.author == user and m.channel == dm_channel,
-                                          timeout=120)
-            personal_goal = msg.content
-
-            # Generate a unique folder using UUID
-            user_uuid = str(uuid.uuid4())
-            user_folder = os.path.join("challenge", user_uuid)  # Save inside challenge/uuid/
-            os.makedirs(user_folder, exist_ok=True)
-
-            # Show example photos and ask for initial photos
-            await dm_channel.send(
-                "📸 Please upload 4 photos following the example poses: Relaxed Front Pose, Front Double Biceps, Rear Double Biceps, and Relaxed Back Pose.")
-            example_photos = ["assets/example.png", "assets/example1.png", "assets/example2.png", "assets/example3.png"]
-            await dm_channel.send(files=[discord.File(photo) for photo in example_photos])
-
-            photos = []
-            while len(photos) < 4:
-                msg = await self.bot.wait_for("message", check=lambda
-                    m: m.author == user and m.channel == dm_channel and m.attachments, timeout=300)
-                for attachment in msg.attachments:
-                    photo_path = os.path.join(user_folder, attachment.filename)
-                    await attachment.save(photo_path)
-                    photos.append(photo_path)
-
-            await dm_channel.send(
-                "✅ Photos received! Would you like to upload any additional poses? Send them now or type 'done'.")
-
-            while True:
-                msg = await self.bot.wait_for("message", check=lambda m: m.author == user and m.channel == dm_channel,
-                                              timeout=300)
-                if msg.content.lower() == "done":
-                    break
-                if msg.attachments:
-                    for attachment in msg.attachments:
-                        photo_path = os.path.join(user_folder, attachment.filename)
-                        await attachment.save(photo_path)
-                        photos.append(photo_path)
-
-            # Store user details in database AFTER completing registration
-            try:
-                async with db.pool.acquire() as conn:
-                    print(f"[DEBUG] Registering {user.name} in challenge_participants.")
-                    await conn.execute("""
-                        INSERT INTO challenge_participants (challenge_id, user_id, username, current_weight, goal_weight, personal_goal, initial_photos)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    """, challenge_id, user.id, user.name, current_weight, goal_weight, personal_goal, photos)
-                    print("[DEBUG] Successfully registered participant.")
-                    await dm_channel.send("✅ You have been successfully registered in the challenge!")
-            except Exception as e:
-                print(f"[ERROR] Failed to register participant: {e}")
-                await dm_channel.send("❌ Error joining the challenge.")
+            if not challenge:
                 return
 
-        except discord.Forbidden:
-            print(f"[ERROR] Cannot send DM to {user.name}. They may have DMs disabled.")
-        except asyncio.TimeoutError:
-            print(f"[WARNING] {user.name} did not respond in time.")
-            await dm_channel.send("⏳ Registration timed out. Please react again to restart.")
-        except Exception as e:
-            print(f"[ERROR] Unexpected error in register_user: {e}")
+            already_joined = await conn.fetchval("""
+                SELECT COUNT(*) FROM challenge_participants 
+                WHERE challenge_id = $1 AND user_id = $2
+            """, challenge['id'], payload.user_id)
+
+            if already_joined:
+                return
+
+            user = await self.bot.fetch_user(payload.user_id)
+            if not user:
+                print(f"⚠️ Could not fetch user {payload.user_id}")
+                return
+
+            username = user.display_name or user.name
+
+            await conn.execute("""
+                INSERT INTO challenge_participants (challenge_id, user_id, username)
+                VALUES ($1, $2, $3)
+            """, challenge['id'], payload.user_id, username)
+
+            # Try to DM user
+            try:
+                dm = await user.create_dm()
+                embed = discord.Embed(
+                    title="📸 Welcome to the Challenge!",
+                    description=(
+                        "**Please upload your 4 initial photos** in these poses:\n\n"
+                        "1️⃣ Relaxed Front Pose\n"
+                        "2️⃣ Front Double Biceps\n"
+                        "3️⃣ Rear Double Biceps\n"
+                        "4️⃣ Relaxed Back Pose\n\n"
+                        "⏰ You can send all at once or one at a time. Type 'done' when finished."
+                    ),
+                    color=discord.Color.orange()
+                )
+                embed.set_footer(text="Reply to this DM to begin.")
+                await dm.send(embed=embed)
+
+                example_photos = [
+                    "assets/example.png", "assets/example1.png",
+                    "assets/example2.png", "assets/example3.png"
+                ]
+                for photo in example_photos:
+                    if os.path.exists(photo):
+                        await dm.send(file=discord.File(photo))
+
+                await dm.send("📸 Upload your 4 initial photos now. Type 'done' when you're finished.")
+
+                print(f"📬 DM onboarding sent to {user.name} ({user.id})")
+
+            except Exception as e:
+                print(f"❌ Failed to DM user {user.id}: {e}")
+
+            # ✅ Notify in public channel
+            channel = self.bot.get_channel(payload.channel_id)
+            if channel:
+                await channel.send(
+                    f"<@{payload.user_id}> ✅ We’ve sent you a DM to get started.\n"
+                    f"If you don’t see it, use the `/join_challenge` command to join manually."
+                )
 
 async def setup(bot):
     await bot.add_cog(Challenge(bot))

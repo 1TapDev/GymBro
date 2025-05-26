@@ -5,3 +5,4 @@ checkin_images/*
 challenge/*
 generate_requirements.py
 pr_videos/*
+__pycache__/*
