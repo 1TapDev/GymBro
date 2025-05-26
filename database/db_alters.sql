@@ -71,3 +71,40 @@ CREATE TABLE IF NOT EXISTS prize_suggestions (
 
 DROP TABLE IF EXISTS prize_suggestions;
 
+-- Add missing columns to challenges table
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS photo_collection_started BOOLEAN DEFAULT FALSE;
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS photo_collection_deadline TIMESTAMP DEFAULT NULL;
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS voting_started BOOLEAN DEFAULT FALSE;
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS voting_end_time TIMESTAMP DEFAULT NULL;
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS voting_messages JSONB DEFAULT NULL;
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS results_posted BOOLEAN DEFAULT FALSE;
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS message_id BIGINT DEFAULT NULL;
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS channel_id BIGINT DEFAULT NULL;
+
+-- Add missing columns to challenge_participants table
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS final_weight DECIMAL(5,2) DEFAULT NULL;
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS final_photos TEXT[] DEFAULT NULL;
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS submitted_final BOOLEAN DEFAULT FALSE;
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS disqualified BOOLEAN DEFAULT FALSE;
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS disqualification_reason TEXT DEFAULT NULL;
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS final_rank INTEGER DEFAULT NULL;
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS votes_received INTEGER DEFAULT 0;
+
+-- Update challenges table to use TIMESTAMP instead of DATE for better precision
+ALTER TABLE challenges ALTER COLUMN start_date TYPE TIMESTAMP USING start_date::TIMESTAMP;
+ALTER TABLE challenges ALTER COLUMN end_date TYPE TIMESTAMP USING end_date::TIMESTAMP;
+
+-- Make sure all boolean columns have proper defaults
+UPDATE challenges SET photo_collection_started = FALSE WHERE photo_collection_started IS NULL;
+UPDATE challenges SET voting_started = FALSE WHERE voting_started IS NULL;
+UPDATE challenges SET results_posted = FALSE WHERE results_posted IS NULL;
+
+UPDATE challenge_participants SET submitted_final = FALSE WHERE submitted_final IS NULL;
+UPDATE challenge_participants SET disqualified = FALSE WHERE disqualified IS NULL;
+UPDATE challenge_participants SET votes_received = 0 WHERE votes_received IS NULL;
+
+-- Add indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_challenges_status ON challenges(status);
+CREATE INDEX IF NOT EXISTS idx_challenges_end_date ON challenges(end_date);
+CREATE INDEX IF NOT EXISTS idx_challenge_participants_challenge_id ON challenge_participants(challenge_id);
+CREATE INDEX IF NOT EXISTS idx_challenge_participants_user_id ON challenge_participants(user_id);
