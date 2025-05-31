@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from database import db
+from discord import app_commands
 import pytz
 
 NYC_TZ = pytz.timezone("America/New_York")
@@ -110,7 +111,7 @@ class ChallengeEnd(commands.Cog):
                 """, challenge_id)
 
                 participants = await conn.fetch("""
-                    SELECT user_id, username FROM challenge_participants 
+                    SELECT user_id, username, submitted_final FROM challenge_participants 
                     WHERE challenge_id = $1 AND COALESCE(disqualified, FALSE) = FALSE
                 """, challenge_id)
 
@@ -135,7 +136,10 @@ class ChallengeEnd(commands.Cog):
 
                 # DM all participants
                 for participant in participants:
-                    user = self.bot.get_user(participant['user_id'])
+                    if participant["submitted_final"]:
+                        print(f"📸 [ChallengeEnd] Skipping {participant['username']} — already submitted final photos.")
+                        continue
+                    user = await self.bot.get_user(participant['user_id'])
                     if user:
                         print(f"📩 [ChallengeEnd] Sending DM to {user.name} ({user.id})")
                         await self.send_final_photo_request(user, challenge_id, challenge_name)
@@ -361,6 +365,36 @@ class ChallengeEnd(commands.Cog):
 
             except Exception as e:
                 print(f"❌ [ChallengeEnd] Error sending reminder: {e}")
+
+    @app_commands.command(name="resend_final_dm", description="Resend DMs to users who haven’t submitted final photos.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def resend_final_dm(self, interaction: discord.Interaction, challenge_id: int):
+        await interaction.response.send_message("🔄 Resending DMs...", ephemeral=True)
+
+        async with db.pool.acquire() as conn:
+            challenge = await conn.fetchrow("SELECT name FROM challenges WHERE id = $1", challenge_id)
+            if not challenge:
+                await interaction.followup.send("❌ Challenge not found.")
+                return
+
+            participants = await conn.fetch("""
+                SELECT user_id, username, submitted_final FROM challenge_participants 
+                WHERE challenge_id = $1 AND COALESCE(disqualified, FALSE) = FALSE
+            """, challenge_id)
+
+        count = 0
+        for p in participants:
+            if p["submitted_final"]:
+                continue
+
+            try:
+                user = await self.bot.fetch_user(p["user_id"])
+                await self.send_final_photo_request(user, challenge_id, challenge["name"])
+                count += 1
+            except Exception as e:
+                print(f"❌ Failed to resend final DM to {p['username']}: {e}")
+
+        await interaction.followup.send(f"📩 DMs resent to {count} users.")
 
     @tasks.loop(minutes=5)  # Check every 5 minutes
     async def check_photo_deadline(self):
