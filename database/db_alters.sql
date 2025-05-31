@@ -71,7 +71,9 @@ CREATE TABLE IF NOT EXISTS prize_suggestions (
 
 DROP TABLE IF EXISTS prize_suggestions;
 
--- Add missing columns to challenges table
+-- ===== CHALLENGE SYSTEM CORE COLUMNS =====
+
+-- Add photo collection tracking
 ALTER TABLE challenges ADD COLUMN IF NOT EXISTS photo_collection_started BOOLEAN DEFAULT FALSE;
 ALTER TABLE challenges ADD COLUMN IF NOT EXISTS photo_collection_deadline TIMESTAMP DEFAULT NULL;
 ALTER TABLE challenges ADD COLUMN IF NOT EXISTS voting_started BOOLEAN DEFAULT FALSE;
@@ -80,31 +82,58 @@ ALTER TABLE challenges ADD COLUMN IF NOT EXISTS voting_messages JSONB DEFAULT NU
 ALTER TABLE challenges ADD COLUMN IF NOT EXISTS results_posted BOOLEAN DEFAULT FALSE;
 ALTER TABLE challenges ADD COLUMN IF NOT EXISTS message_id BIGINT DEFAULT NULL;
 ALTER TABLE challenges ADD COLUMN IF NOT EXISTS channel_id BIGINT DEFAULT NULL;
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS end_notification_sent BOOLEAN DEFAULT FALSE;
 
--- Add missing columns to challenge_participants table
+-- ===== PARTICIPANT TRACKING COLUMNS =====
+
+-- Add final submission tracking
 ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS final_weight DECIMAL(5,2) DEFAULT NULL;
 ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS final_photos TEXT[] DEFAULT NULL;
 ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS submitted_final BOOLEAN DEFAULT FALSE;
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS submission_date TIMESTAMP DEFAULT NULL;
+
+-- Add DM tracking for final photo requests
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS final_dm_sent BOOLEAN DEFAULT FALSE;
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS dm_failed BOOLEAN DEFAULT FALSE;
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS dm_completed BOOLEAN DEFAULT FALSE;
+
+-- Add disqualification tracking
 ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS disqualified BOOLEAN DEFAULT FALSE;
 ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS disqualification_reason TEXT DEFAULT NULL;
+
+-- Add voting results tracking
 ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS final_rank INTEGER DEFAULT NULL;
 ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS votes_received INTEGER DEFAULT 0;
 
--- Update challenges table to use TIMESTAMP instead of DATE for better precision
-ALTER TABLE challenges ALTER COLUMN start_date TYPE TIMESTAMP USING start_date::TIMESTAMP;
-ALTER TABLE challenges ALTER COLUMN end_date TYPE TIMESTAMP USING end_date::TIMESTAMP;
+-- ===== PERFORMANCE INDEXES =====
 
--- Make sure all boolean columns have proper defaults
+-- Add indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_challenges_status ON challenges(status);
+CREATE INDEX IF NOT EXISTS idx_challenges_end_date ON challenges(end_date);
+CREATE INDEX IF NOT EXISTS idx_challenges_photo_collection ON challenges(photo_collection_started);
+CREATE INDEX IF NOT EXISTS idx_challenges_voting ON challenges(voting_started);
+CREATE INDEX IF NOT EXISTS idx_challenge_participants_challenge_id ON challenge_participants(challenge_id);
+CREATE INDEX IF NOT EXISTS idx_challenge_participants_user_id ON challenge_participants(user_id);
+CREATE INDEX IF NOT EXISTS idx_challenge_participants_submitted ON challenge_participants(submitted_final);
+CREATE INDEX IF NOT EXISTS idx_challenge_participants_dm_sent ON challenge_participants(final_dm_sent);
+
+-- ===== UPDATE EXISTING DATA =====
+
+-- Ensure all boolean columns have proper defaults for existing data
 UPDATE challenges SET photo_collection_started = FALSE WHERE photo_collection_started IS NULL;
 UPDATE challenges SET voting_started = FALSE WHERE voting_started IS NULL;
 UPDATE challenges SET results_posted = FALSE WHERE results_posted IS NULL;
+UPDATE challenges SET end_notification_sent = FALSE WHERE end_notification_sent IS NULL;
 
 UPDATE challenge_participants SET submitted_final = FALSE WHERE submitted_final IS NULL;
 UPDATE challenge_participants SET disqualified = FALSE WHERE disqualified IS NULL;
 UPDATE challenge_participants SET votes_received = 0 WHERE votes_received IS NULL;
+UPDATE challenge_participants SET final_dm_sent = FALSE WHERE final_dm_sent IS NULL;
+UPDATE challenge_participants SET dm_failed = FALSE WHERE dm_failed IS NULL;
+UPDATE challenge_participants SET dm_completed = FALSE WHERE dm_completed IS NULL;
 
--- Add indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_challenges_status ON challenges(status);
-CREATE INDEX IF NOT EXISTS idx_challenges_end_date ON challenges(end_date);
-CREATE INDEX IF NOT EXISTS idx_challenge_participants_challenge_id ON challenge_participants(challenge_id);
-CREATE INDEX IF NOT EXISTS idx_challenge_participants_user_id ON challenge_participants(user_id);
+-- ===== TIMESTAMP PRECISION UPDATE =====
+
+-- Convert challenges date columns to TIMESTAMP for better precision
+ALTER TABLE challenges ALTER COLUMN start_date TYPE TIMESTAMP USING start_date::TIMESTAMP;
+ALTER TABLE challenges ALTER COLUMN end_date TYPE TIMESTAMP USING end_date::TIMESTAMP;

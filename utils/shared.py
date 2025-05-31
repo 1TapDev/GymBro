@@ -150,6 +150,17 @@ async def collect_final_photos(bot, user, dm_channel, challenge_id, challenge_na
 
         # Update database with final submission
         async with db.pool.acquire() as conn:
+            # Check if already submitted to prevent duplicates
+            already_submitted = await conn.fetchval("""
+                SELECT submitted_final FROM challenge_participants 
+                WHERE challenge_id = $1 AND user_id = $2
+            """, challenge_id, user.id)
+
+            if already_submitted:
+                await dm_channel.send("✅ You have already submitted your final photos for this challenge!")
+                return
+
+            # Update with final submission
             await conn.execute("""
                 UPDATE challenge_participants 
                 SET final_photos = $1, 
@@ -157,6 +168,7 @@ async def collect_final_photos(bot, user, dm_channel, challenge_id, challenge_na
                     submitted_final = TRUE,
                     submission_date = NOW()
                 WHERE challenge_id = $3 AND user_id = $4
+                AND COALESCE(submitted_final, FALSE) = FALSE
             """, photos, final_weight, challenge_id, user.id)
 
         # Send completion confirmation

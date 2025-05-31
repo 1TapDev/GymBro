@@ -336,7 +336,7 @@ class Challenge(commands.Cog):
                 )
 
     async def start_sequential_dm_onboarding(self, challenge_id, challenge_name, user):
-        """Handle the complete DM onboarding process with sequential photo collection"""
+        """Handle the complete DM onboarding process with parallel photo collection"""
         try:
             dm = await user.create_dm()
 
@@ -348,71 +348,62 @@ class Challenge(commands.Cog):
                     "2️⃣ Front Double Biceps\n"
                     "3️⃣ Rear Double Biceps\n"
                     "4️⃣ Relaxed Back Pose\n\n"
-                    "📋 **Process:** I'll show you an example, then you upload your version. We'll do this for all 4 poses.\n"
+                    "📋 **Process:** I'll show you all examples first, then you can upload all 4 photos in any order.\n"
                 ),
                 color=discord.Color.orange()
             )
-            embed.set_footer(text="Let's start with the first pose!")
+            embed.set_footer(text="Let's see all the example poses!")
             await dm.send(embed=embed)
+
+            # Show all example photos at once
+            example_data = [
+                {"file": "assets/example.png", "pose": "Relaxed Front Pose"},
+                {"file": "assets/example1.png", "pose": "Front Double Biceps"},
+                {"file": "assets/example2.png", "pose": "Rear Double Biceps"},
+                {"file": "assets/example3.png", "pose": "Relaxed Back Pose"}
+            ]
+
+            # Send all examples
+            for i, data in enumerate(example_data):
+                if os.path.exists(data["file"]):
+                    await dm.send(f"**{i + 1}️⃣ Example: {data['pose']}**")
+                    await dm.send(file=discord.File(data["file"]))
+
+            # Now ask for all photos at once
+            await dm.send(
+                "📸 **Now upload your 4 photos!**\n"
+                "You can upload them in any order - just send 4 photos and I'll save them.\n"
+                "Make sure each photo clearly shows the pose!"
+            )
 
             def photo_check(m):
                 return m.author.id == user.id and m.channel == dm and m.attachments
 
             photos = []
+            photo_count = 0
 
-            # Example photos and their corresponding pose instructions
-            example_data = [
-                {
-                    "file": "assets/example.png",
-                    "pose": "Relaxed Front Pose",
-                    "instruction": "📸 Now upload your **Relaxed Front Pose** photo:"
-                },
-                {
-                    "file": "assets/example1.png",
-                    "pose": "Front Double Biceps",
-                    "instruction": "📸 Now upload your **Front Double Biceps** photo:"
-                },
-                {
-                    "file": "assets/example2.png",
-                    "pose": "Rear Double Biceps",
-                    "instruction": "📸 Now upload your **Rear Double Biceps** photo:"
-                },
-                {
-                    "file": "assets/example3.png",
-                    "pose": "Relaxed Back Pose",
-                    "instruction": "📸 Now upload your **Relaxed Back Pose** photo:"
-                }
-            ]
+            # Collect 4 photos in parallel (user can send in any order/timing)
+            while photo_count < 4:
+                msg = await self.bot.wait_for("message", check=photo_check, timeout=600)  # 10 minute timeout
 
-            # Sequential photo collection
-            for i, data in enumerate(example_data):
-                # Show example photo
-                if os.path.exists(data["file"]):
-                    await dm.send(f"**{i + 1}️⃣ Example: {data['pose']}**")
-                    await dm.send(file=discord.File(data["file"]))
+                for attachment in msg.attachments:
+                    if photo_count >= 4:
+                        break
 
-                # Ask for user's photo
-                await dm.send(data["instruction"])
+                    # Save the photo
+                    photo_path = f"challenge/{challenge_id}/initial/{user.id}"
+                    os.makedirs(photo_path, exist_ok=True)
+                    file_path = os.path.join(photo_path, f"photo_{photo_count + 1}_{attachment.filename}")
+                    await attachment.save(file_path)
+                    photos.append(file_path)
+                    photo_count += 1
 
-                # Wait for user photo (no timeout)
-                msg = await self.bot.wait_for("message", check=photo_check)
+                    await dm.send(f"✅ Photo {photo_count}/4 received!")
 
-                # Save the photo
-                attachment = msg.attachments[0]
-                photo_path = f"challenge/{challenge_id}/initial/{user.id}"
-                os.makedirs(photo_path, exist_ok=True)
-                file_path = os.path.join(photo_path, f"photo_{i + 1}_{attachment.filename}")
-                await attachment.save(file_path)
-                photos.append(file_path)
+                if photo_count >= 4:
+                    break
 
-                await dm.send(f"✅ Photo {i + 1}/4 received! Great job!")
-
-                # Small delay before next pose
-                if i < len(example_data) - 1:
-                    await asyncio.sleep(1)
-                    await dm.send("━" * 30)
-
-            await dm.send("🎉 All initial photos received! Now let's get your weight and goals...")
+            await dm.send("🎉 All 4 photos received! Now let's get your weight and goals...")
 
             # Ask for weight
             await dm.send("⚖️ What is your **current weight** in pounds? (e.g., 175.5)")

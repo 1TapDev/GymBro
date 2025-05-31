@@ -90,7 +90,7 @@ class ChallengeEnd(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def start_photo_collection(self, challenge_id, challenge_name):
-        """DM all participants to submit final photos"""
+        """DM all participants to submit final photos - CONCURRENT VERSION"""
         print(f"📸 [ChallengeEnd] Starting photo collection for challenge {challenge_id}")
 
         try:
@@ -101,7 +101,6 @@ class ChallengeEnd(commands.Cog):
                 """, challenge_id)
 
                 # Get participants who haven't submitted final photos yet
-                # This ensures we only DM people who actually need to submit
                 participants = await conn.fetch("""
                     SELECT cp.user_id, u.username, COALESCE(cp.submitted_final, FALSE) AS submitted_final,
                            COALESCE(cp.final_dm_sent, FALSE) AS dm_sent
@@ -116,8 +115,7 @@ class ChallengeEnd(commands.Cog):
 
                 # If no one needs DMs, we're done
                 if not participants:
-                    print(
-                        f"✅ [ChallengeEnd] All participants already submitted or were DMed for challenge {challenge_id}")
+                    print(f"✅ [ChallengeEnd] All participants already submitted or were DMed for challenge {challenge_id}")
                     return
 
                 # Send notification to the challenge channel (only once)
@@ -156,88 +154,89 @@ class ChallengeEnd(commands.Cog):
 
                         print(f"📢 [ChallengeEnd] Sent end notification to channel {challenge_info['channel_id']}")
 
-                # DM participants who haven't been DMed yet or haven't submitted
-                success_count = 0
-                fail_count = 0
+            # Create concurrent tasks for DM sending
+            tasks = []
+            participants_to_dm = []
 
-                for participant in participants:
-                    print(f"\n--- DM DEBUG START ---")
-                    print(f"Participant ID: {participant['user_id']}")
-                    print(f"Username: {participant['username']}")
-                    print(f"Submitted Final: {participant['submitted_final']}")
-                    print(f"DM Previously Sent: {participant.get('dm_sent', False)}")
+            for i, participant in enumerate(participants):
+                print(f"\n--- DM DEBUG START ({i + 1}/{len(participants)}) ---")
+                print(f"Participant ID: {participant['user_id']}")
+                print(f"Username: {participant['username']}")
+                print(f"Submitted Final: {participant['submitted_final']}")
+                print(f"DM Previously Sent: {participant.get('dm_sent', False)}")
 
-                    try:
-                        # Use fetch_user to ensure we get the user even if not cached
-                        user = await self.bot.fetch_user(participant['user_id'])
-                        print(f"✅ [ChallengeEnd] Fetched user: {user} (ID: {user.id})")
+                # Skip if already submitted or already DMed
+                if participant['submitted_final'] or participant.get('dm_sent', False):
+                    print(f"⏩ [ChallengeEnd] Skipping {participant['username']}, already submitted or DM sent")
+                    continue
 
-                        print(f"📩 [ChallengeEnd] Sending DM to {user.name} ({user.id})")
+                # Create task for this participant
+                task = asyncio.create_task(
+                    self._send_dm_to_participant(participant, challenge_id, challenge_name)
+                )
+                tasks.append(task)
+                participants_to_dm.append(participant)
 
-                        # FIXED: Use the imported function with proper parameters
-                        await send_final_photo_request(self.bot, user, challenge_id, challenge_name)
+            if not tasks:
+                print("ℹ️ [ChallengeEnd] No participants need DMs")
+                return
 
-                        print(f"[ChallengeEnd] DM attempt: {user.name} | success=True | error=''")
+            print(f"🚀 [ChallengeEnd] Starting {len(tasks)} concurrent DM tasks...")
 
-                        # Mark that we've sent the DM to this user
-                        await conn.execute("""
-                            UPDATE challenge_participants 
-                            SET final_dm_sent = TRUE 
-                            WHERE challenge_id = $1 AND user_id = $2
-                        """, challenge_id, user.id)
+            # Execute all DM tasks concurrently
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                        # Start reminder task
-                        task_key = f"{challenge_id}_{user.id}"
-                        if task_key in self.photo_reminders:
-                            self.photo_reminders[task_key].cancel()
-                        task = asyncio.create_task(
-                            self.photo_reminder_loop(user, challenge_id, challenge_name)
-                        )
-                        self.photo_reminders[task_key] = task
+            # Process results and update database
+            success_count = 0
+            fail_count = 0
+
+            async with db.pool.acquire() as conn:
+                for i, (result, participant) in enumerate(zip(results, participants_to_dm)):
+                    if isinstance(result, Exception):
+                        print(f"❌ [ChallengeEnd] Error DMing {participant['username']}: {result}")
+                        fail_count += 1
+
+                        # Mark as failed in database
+                        try:
+                            await conn.execute("""
+                                UPDATE challenge_participants 
+                                SET final_dm_sent = TRUE, dm_failed = TRUE 
+                                WHERE challenge_id = $1 AND user_id = $2
+                            """, challenge_id, participant['user_id'])
+                        except Exception as db_error:
+                            print(f"❌ [ChallengeEnd] Database error marking failed DM: {db_error}")
+
+                    elif result:  # Success
+                        print(f"✅ [ChallengeEnd] Successfully sent DM to {participant['username']}")
                         success_count += 1
-                        print(f"✅ [ChallengeEnd] Successfully sent DM and started reminder task for {user.name}")
 
-                    except discord.NotFound:
-                        error_msg = f"User {participant['user_id']} not found"
-                        print(
-                            f"[ChallengeEnd] DM attempt: {participant['username']} | success=False | error='{error_msg}'")
-                        print(f"❌ [ChallengeEnd] {error_msg}")
+                        # Mark as sent in database
+                        try:
+                            await conn.execute("""
+                                UPDATE challenge_participants 
+                                SET final_dm_sent = TRUE 
+                                WHERE challenge_id = $1 AND user_id = $2
+                            """, challenge_id, participant['user_id'])
+
+                            # Start reminder task
+                            user = await self.bot.fetch_user(participant['user_id'])
+                            task_key = f"{challenge_id}_{user.id}"
+                            if task_key in self.photo_reminders:
+                                self.photo_reminders[task_key].cancel()
+                            reminder_task = asyncio.create_task(
+                                self.photo_reminder_loop(user, challenge_id, challenge_name)
+                            )
+                            self.photo_reminders[task_key] = reminder_task
+
+                        except Exception as db_error:
+                            print(f"❌ [ChallengeEnd] Database error marking successful DM: {db_error}")
+                    else:
+                        print(f"⚠️ [ChallengeEnd] Unexpected result for {participant['username']}: {result}")
                         fail_count += 1
-                        # Mark as failed so we don't keep trying
-                        await conn.execute("""
-                            UPDATE challenge_participants 
-                            SET final_dm_sent = TRUE, dm_failed = TRUE 
-                            WHERE challenge_id = $1 AND user_id = $2
-                        """, challenge_id, participant['user_id'])
-
-                    except discord.Forbidden:
-                        error_msg = f"Cannot DM user {participant['user_id']} - DMs disabled"
-                        print(
-                            f"[ChallengeEnd] DM attempt: {participant['username']} | success=False | error='{error_msg}'")
-                        print(f"❌ [ChallengeEnd] {error_msg}")
-                        fail_count += 1
-                        # Mark as failed so we don't keep trying
-                        await conn.execute("""
-                            UPDATE challenge_participants 
-                            SET final_dm_sent = TRUE, dm_failed = TRUE 
-                            WHERE challenge_id = $1 AND user_id = $2
-                        """, challenge_id, participant['user_id'])
-
-                    except Exception as e:
-                        error_msg = str(e)
-                        print(
-                            f"[ChallengeEnd] DM attempt: {participant['username']} | success=False | error='{error_msg}'")
-                        print(
-                            f"❌ [ChallengeEnd] Failed to DM {participant['username']} ({participant['user_id']}): {e}")
-                        fail_count += 1
-                        traceback.print_exc()
-
-                    print(f"--- DM DEBUG END ---\n")
 
                 print(f"📊 [ChallengeEnd] DM Summary: {success_count} sent, {fail_count} failed")
 
-                # Only mark photo collection as fully started if we successfully processed all participants
-                # or if there are no more participants to process
+                # Check if photo collection should be marked as fully started
                 remaining_participants = await conn.fetchval("""
                     SELECT COUNT(*) FROM challenge_participants 
                     WHERE challenge_id = $1 
@@ -253,15 +252,45 @@ class ChallengeEnd(commands.Cog):
                             photo_collection_deadline = NOW() + INTERVAL '%s hours'
                         WHERE id = $1
                     """ % PHOTO_SUBMISSION_DEADLINE_HOURS, challenge_id)
-                    print(
-                        f"✅ [ChallengeEnd] All participants processed, photo collection fully started for challenge {challenge_id}")
+                    print(f"✅ [ChallengeEnd] All participants processed, photo collection fully started for challenge {challenge_id}")
                 else:
-                    print(
-                        f"⚠️ [ChallengeEnd] {remaining_participants} participants still need DMs for challenge {challenge_id}")
+                    print(f"⚠️ [ChallengeEnd] {remaining_participants} participants still need DMs for challenge {challenge_id}")
 
         except Exception as e:
             print(f"❌ [ChallengeEnd] Error in start_photo_collection: {e}")
             traceback.print_exc()
+
+    async def _send_dm_to_participant(self, participant, challenge_id, challenge_name):
+        """Helper method to send DM to a single participant"""
+        try:
+            # Fetch the user
+            user = await self.bot.fetch_user(participant['user_id'])
+            print(f"✅ [ChallengeEnd] Fetched user: {user} (ID: {user.id})")
+
+            print(f"📩 [ChallengeEnd] Sending DM to {user.name} ({user.id})")
+
+            # Send the DM using the imported function
+            await send_final_photo_request(self.bot, user, challenge_id, challenge_name)
+
+            print(f"[ChallengeEnd] DM attempt: {user.name} | success=True | error=''")
+            return True
+
+        except discord.NotFound:
+            error_msg = f"User {participant['user_id']} not found"
+            print(f"[ChallengeEnd] DM attempt: {participant['username']} | success=False | error='{error_msg}'")
+            raise discord.NotFound(f"User {participant['user_id']} not found")
+
+        except discord.Forbidden:
+            error_msg = f"Cannot DM user {participant['user_id']} - DMs disabled"
+            print(f"[ChallengeEnd] DM attempt: {participant['username']} | success=False | error='{error_msg}'")
+            raise discord.Forbidden(f"Cannot DM user {participant['user_id']}")
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[ChallengeEnd] DM attempt: {participant['username']} | success=False | error='{error_msg}'")
+            print(f"❌ [ChallengeEnd] Failed to DM {participant['username']} ({participant['user_id']}): {e}")
+            traceback.print_exc()
+            raise e
 
     async def photo_reminder_loop(self, user, challenge_id, challenge_name):
         """Send periodic reminders to users who haven't submitted photos"""
@@ -385,6 +414,238 @@ class ChallengeEnd(commands.Cog):
                 f"❌ An error occurred: {str(e)}",
                 ephemeral=True
             )
+
+    @app_commands.command(name="check_dm_status",
+                          description="Check DM status for challenge participants")
+    @app_commands.describe(challenge_id="The challenge ID to check")
+    @app_commands.default_permissions(administrator=True)
+    async def check_dm_status(self, interaction: discord.Interaction, challenge_id: int):
+        """Admin command to check DM status for all participants"""
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            async with db.pool.acquire() as conn:
+                # Get challenge details
+                challenge = await conn.fetchrow("""
+                        SELECT name, status FROM challenges WHERE id = $1
+                    """, challenge_id)
+
+                if not challenge:
+                    await interaction.followup.send(f"❌ Challenge with ID `{challenge_id}` not found!", ephemeral=True)
+                    return
+
+                # Get all participants with their DM status
+                participants = await conn.fetch("""
+                        SELECT 
+                            cp.user_id, 
+                            cp.username,
+                            COALESCE(cp.submitted_final, FALSE) AS submitted_final,
+                            COALESCE(cp.final_dm_sent, FALSE) AS dm_sent,
+                            COALESCE(cp.dm_failed, FALSE) AS dm_failed,
+                            COALESCE(cp.disqualified, FALSE) AS disqualified
+                        FROM challenge_participants cp
+                        WHERE cp.challenge_id = $1
+                        ORDER BY cp.username
+                    """, challenge_id)
+
+                if not participants:
+                    await interaction.followup.send(f"❌ No participants found for challenge {challenge_id}!",
+                                                    ephemeral=True)
+                    return
+
+                # Create status embed
+                embed = discord.Embed(
+                    title=f"📊 DM Status for {challenge['name']}",
+                    description=f"Challenge ID: {challenge_id}",
+                    color=discord.Color.blue()
+                )
+
+                # Categorize participants
+                submitted = []
+                dm_sent_pending = []
+                dm_failed = []
+                needs_dm = []
+                disqualified = []
+
+                for p in participants:
+                    if p['disqualified']:
+                        disqualified.append(f"• {p['username']}")
+                    elif p['submitted_final']:
+                        submitted.append(f"• {p['username']}")
+                    elif p['dm_failed']:
+                        dm_failed.append(f"• {p['username']} (ID: {p['user_id']})")
+                    elif p['dm_sent']:
+                        dm_sent_pending.append(f"• {p['username']}")
+                    else:
+                        needs_dm.append(f"• {p['username']} (ID: {p['user_id']})")
+
+                # Add fields
+                if submitted:
+                    embed.add_field(
+                        name=f"✅ Submitted Final Photos ({len(submitted)})",
+                        value="\n".join(submitted[:10]) + ("..." if len(submitted) > 10 else ""),
+                        inline=False
+                    )
+
+                if dm_sent_pending:
+                    embed.add_field(
+                        name=f"📤 DM Sent, Awaiting Photos ({len(dm_sent_pending)})",
+                        value="\n".join(dm_sent_pending[:10]) + ("..." if len(dm_sent_pending) > 10 else ""),
+                        inline=False
+                    )
+
+                if needs_dm:
+                    embed.add_field(
+                        name=f"⚠️ Needs DM ({len(needs_dm)})",
+                        value="\n".join(needs_dm[:10]) + ("..." if len(needs_dm) > 10 else ""),
+                        inline=False
+                    )
+
+                if dm_failed:
+                    embed.add_field(
+                        name=f"❌ DM Failed ({len(dm_failed)})",
+                        value="\n".join(dm_failed[:10]) + ("..." if len(dm_failed) > 10 else ""),
+                        inline=False
+                    )
+
+                if disqualified:
+                    embed.add_field(
+                        name=f"🚫 Disqualified ({len(disqualified)})",
+                        value="\n".join(disqualified[:10]) + ("..." if len(disqualified) > 10 else ""),
+                        inline=False
+                    )
+
+                embed.set_footer(text="Use /resend_individual_dm to resend to specific users")
+
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            print(f"❌ [DM Status] Command error: {e}")
+            await interaction.followup.send(f"❌ An error occurred: {str(e)}", ephemeral=True)
+
+    @app_commands.command(name="resend_individual_dm",
+                          description="Resend final photo DM to a specific participant")
+    @app_commands.describe(
+        challenge_id="The challenge ID",
+        user="The user to resend DM to"
+    )
+    @app_commands.default_permissions(administrator=True)
+    async def resend_individual_dm(self, interaction: discord.Interaction, challenge_id: int, user: discord.Member):
+        """Admin command to resend final photo collection DM to a specific user"""
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            async with db.pool.acquire() as conn:
+                # Get challenge details
+                challenge = await conn.fetchrow("""
+                        SELECT name, status FROM challenges WHERE id = $1
+                    """, challenge_id)
+
+                if not challenge:
+                    await interaction.followup.send(f"❌ Challenge with ID `{challenge_id}` not found!", ephemeral=True)
+                    return
+
+                # Check if user is a participant
+                participant = await conn.fetchrow("""
+                        SELECT * FROM challenge_participants 
+                        WHERE challenge_id = $1 AND user_id = $2
+                    """, challenge_id, user.id)
+
+                if not participant:
+                    await interaction.followup.send(f"❌ {user.mention} is not a participant in this challenge!",
+                                                    ephemeral=True)
+                    return
+
+                # Check if they already submitted
+                if participant.get('submitted_final'):
+                    await interaction.followup.send(f"✅ {user.mention} has already submitted their final photos!",
+                                                    ephemeral=True)
+                    return
+
+                # Reset DM flags for this specific user
+                await conn.execute("""
+                        UPDATE challenge_participants 
+                        SET final_dm_sent = FALSE, dm_failed = FALSE
+                        WHERE challenge_id = $1 AND user_id = $2
+                    """, challenge_id, user.id)
+
+            # Send confirmation
+            embed = discord.Embed(
+                title="📩 Resending Individual DM",
+                description=(
+                    f"**Challenge:** {challenge['name']}\n"
+                    f"**Participant:** {user.mention}\n\n"
+                    "Sending final photo DM..."
+                ),
+                color=discord.Color.blue()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+            # Send the DM
+            try:
+                await self._send_dm_to_participant(
+                    {'user_id': user.id, 'username': user.display_name or user.name},
+                    challenge_id,
+                    challenge['name']
+                )
+
+                # Mark as sent in database
+                async with db.pool.acquire() as conn:
+                    await conn.execute("""
+                            UPDATE challenge_participants 
+                            SET final_dm_sent = TRUE 
+                            WHERE challenge_id = $1 AND user_id = $2
+                        """, challenge_id, user.id)
+
+                # Send success message
+                success_embed = discord.Embed(
+                    title="✅ DM Sent Successfully",
+                    description=(
+                        f"**Challenge:** {challenge['name']}\n"
+                        f"**Participant:** {user.mention}\n\n"
+                        "Final photo DM has been sent successfully!"
+                    ),
+                    color=discord.Color.green()
+                )
+                await interaction.edit_original_response(embed=success_embed)
+
+            except discord.Forbidden:
+                # Update as failed
+                async with db.pool.acquire() as conn:
+                    await conn.execute("""
+                            UPDATE challenge_participants 
+                            SET final_dm_sent = TRUE, dm_failed = TRUE 
+                            WHERE challenge_id = $1 AND user_id = $2
+                        """, challenge_id, user.id)
+
+                error_embed = discord.Embed(
+                    title="❌ DM Failed",
+                    description=(
+                        f"**Challenge:** {challenge['name']}\n"
+                        f"**Participant:** {user.mention}\n\n"
+                        "❌ Cannot send DM - user has DMs disabled."
+                    ),
+                    color=discord.Color.red()
+                )
+                await interaction.edit_original_response(embed=error_embed)
+
+            except Exception as e:
+                print(f"❌ [Individual DM] Error sending to {user.name}: {e}")
+
+                error_embed = discord.Embed(
+                    title="❌ DM Failed",
+                    description=(
+                        f"**Challenge:** {challenge['name']}\n"
+                        f"**Participant:** {user.mention}\n\n"
+                        f"❌ Error: {str(e)}"
+                    ),
+                    color=discord.Color.red()
+                )
+                await interaction.edit_original_response(embed=error_embed)
+
+        except Exception as e:
+            print(f"❌ [Individual DM] Command error: {e}")
+            await interaction.followup.send(f"❌ An error occurred: {str(e)}", ephemeral=True)
 
     @tasks.loop(minutes=5)  # Check every 5 minutes
     async def check_photo_deadline(self):
