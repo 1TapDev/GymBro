@@ -11,6 +11,7 @@ from database import db
 from datetime import datetime, timedelta
 from .challenge_end import ChallengeEnd
 from .challenge_voting import ChallengeVoting
+from utils.shared import send_final_photo_request
 
 # Set Eastern Time (New York Timezone)
 NYC_TZ = pytz.timezone("America/New_York")
